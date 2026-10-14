@@ -1,0 +1,446 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Raktári termék és saruzófej / szerszám entitás",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "description": "Egyedi termék azonosító kód (pl. 40107.00.33)",
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "description": "Termék megnevezése",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Részletes leírás",
+          "maxLength": 1000
+        },
+        "category": {
+          "type": "string",
+          "description": "Termékkategória (pl. Saruzófej)",
+          "maxLength": 100
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "Gyártó (pl. Mecal)",
+          "maxLength": 100
+        },
+        "feeding": {
+          "type": "string",
+          "description": "Adagolás módja (pl. Oldal, Hátul)",
+          "maxLength": 100
+        },
+        "insulationType": {
+          "type": "string",
+          "description": "Szigetelés típusa (pl. Nem Gumis, Gumis)",
+          "maxLength": 100
+        },
+        "factoryCode": {
+          "type": "string",
+          "description": "Gyári kód / cikkszám (pl. MLS0185-J)",
+          "maxLength": 100
+        },
+        "insulationGripperType": {
+          "type": "string",
+          "description": "Szigetelésmegfogó típusa (pl. F)",
+          "maxLength": 100
+        },
+        "connectorType": {
+          "type": "string",
+          "description": "Konektor típusa",
+          "maxLength": 100
+        },
+        "terminalType": {
+          "type": "string",
+          "description": "Saru típusa",
+          "maxLength": 100
+        },
+        "date": {
+          "type": "string",
+          "description": "Dátum vagy rögzítés ideje",
+          "maxLength": 50
+        },
+        "images": {
+          "type": "array",
+          "description": "Képek webes hivatkozásai (URL)",
+          "maxLength": 20
+        },
+        "stockQuantity": {
+          "type": "number",
+          "description": "Raktári darabszám"
+        },
+        "location": {
+          "type": "string",
+          "description": "Raktári polc vagy lokáció",
+          "maxLength": 100
+        },
+        "positionsCount": {
+          "type": "number",
+          "description": "Pozíciók száma (1-999) Konnektor kategóriájú termékeknél"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId", "name"]
+    },
+    "ProductComponent": {
+      "title": "ProductComponent",
+      "description": "Termékbe beépülő alkatrész kapcsolat (Termék ID 1 -> Termék ID 2)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója",
+          "maxLength": 200
+        },
+        "parentProductId": {
+          "type": "string",
+          "description": "Fő termék azonosítója (Termék ID 1)",
+          "maxLength": 100
+        },
+        "componentProductId": {
+          "type": "string",
+          "description": "Beépülő alkatrész azonosítója (Termék ID 2)",
+          "maxLength": 100
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Mennyi alkatrész épül be az adott termékbe (darabszám)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["parentProductId", "componentProductId"]
+    },
+    "ProductMeterBoxRelation": {
+      "title": "ProductMeterBoxRelation",
+      "description": "Gyártandó termék és Mérődoboz közti kapcsolat (Termék ID 1 <-> Termék ID 2)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Első termék azonosítója (Termék ID 1)",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Második termék azonosítója (Termék ID 2)",
+          "maxLength": 100
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Kapcsolódó darabszám (mennyi tartozik hozzá)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
+    "ProductConnectorTerminalRelation": {
+      "title": "ProductConnectorTerminalRelation",
+      "description": "Konnektor és Saru közti kapcsolat (Termék ID 1 <-> Termék ID 2)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Első termék azonosítója (Konnektor vagy Saru ID)",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Második termék azonosítója (Saru vagy Konnektor ID)",
+          "maxLength": 100
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Kapcsolódó darabszám (mennyi tartozik hozzá)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
+    "ProductMatingPairRelation": {
+      "title": "ProductMatingPairRelation",
+      "description": "Konnektor-Konnektor vagy Saru-Saru ellenpár kapcsolat",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Első termék azonosítója (Konnektor vagy Saru ID)",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Ellenpár termék azonosítója (Konnektor vagy Saru ID)",
+          "maxLength": 100
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Kapcsolódó darabszám (mennyi tartozik hozzá)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
+    "ProductTerminalFejRelation": {
+      "title": "ProductTerminalFejRelation",
+      "description": "Saru és Saruzófej kapcsolat (kétirányú, halvány narancssárga)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Saru vagy Saruzófej azonosítója",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Saruzófej vagy Saru azonosítója",
+          "maxLength": 100
+        },
+        "quantity": {
+          "type": "number",
+          "description": "Kapcsolódó darabszám (mennyi tartozik hozzá)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
+    "ProductTerminalFejDisconnection": {
+      "title": "ProductTerminalFejDisconnection",
+      "description": "Manuálisan leválasztott Saru és Saruzófej kapcsolat kizárása (crimp táblázat felülbírálata)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Leválasztás egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Saru vagy Saruzófej azonosítója",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Leválasztott másik fél azonosítója",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Leválasztás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Felhasználói profil és jogosultsági szerepkör (admin, editor, viewer)",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Felhasználó egyedi azonosítója",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Elsődleges bejelentkezési e-mail cím",
+          "maxLength": 200
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Felhasználó neve",
+          "maxLength": 200
+        },
+        "secondaryEmail": {
+          "type": "string",
+          "description": "Másik / értesítési e-mail cím",
+          "maxLength": 200
+        },
+        "role": {
+          "type": "string",
+          "description": "Jogosultsági szint: admin | editor | viewer",
+          "enum": ["admin", "editor", "viewer"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Létrehozás ideje"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás ideje"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "ProductNote": {
+      "title": "ProductNote",
+      "description": "Termékhez tartozó Notesz bejegyzés, dokumentum, rajz és külön fénykép",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Bejegyzés egyedi azonosítója",
+          "maxLength": 200
+        },
+        "productId": {
+          "type": "string",
+          "description": "Kapcsolódó termék azonosítója (Termék ID)",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "description": "Bejegyzés címe / megnevezése",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "description": "Részletes megjegyzés szövege",
+          "maxLength": 2000
+        },
+        "date": {
+          "type": "string",
+          "description": "Dátum",
+          "maxLength": 50
+        },
+        "url": {
+          "type": "string",
+          "description": "Kapcsolódó webcím, PDF vagy kép linkje",
+          "maxLength": 500
+        },
+        "nameChoice": {
+          "type": "string",
+          "description": "Kategória / címke",
+          "maxLength": 100
+        },
+        "images": {
+          "type": "array",
+          "description": "Külön feltöltött fényképek listája",
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Létrehozás ideje (ISO string)"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Utolsó módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId", "title"]
+    },
+    "KanbanItem": {
+      "title": "KanbanItem",
+      "description": "Kanban tábla feladat tételek és termék összerendelések",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Egyedi feladat azonosító"
+        },
+        "productIds": {
+          "type": "array",
+          "description": "Összerendelt termék azonosítók listája",
+          "items": { "type": "string" }
+        },
+        "status": {
+          "type": "string",
+          "description": "Kanban állapot: new (Új - piros), in_progress (Folyamatban - kék), completed (Befejezve - zöld)",
+          "enum": ["new", "in_progress", "completed"]
+        },
+        "note": {
+          "type": "string",
+          "description": "Megjegyzés / feladat leírás",
+          "maxLength": 2000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Létrehozás ideje"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Módosítás ideje"
+        }
+      },
+      "required": ["productIds", "status"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Raktári termékek gyűjteménye"
+    },
+    "/product_components/{relationId}": {
+      "schema": "ProductComponent",
+      "description": "Termékbe beépülő alkatrész kapcsolatok gyűjteménye"
+    },
+    "/product_meterboxes/{relationId}": {
+      "schema": "ProductMeterBoxRelation",
+      "description": "Gyártandó termék és Mérődoboz kapcsolatok gyűjteménye"
+    },
+    "/product_connector_terminals/{relationId}": {
+      "schema": "ProductConnectorTerminalRelation",
+      "description": "Konnektor és Saru kapcsolatok gyűjteménye"
+    },
+    "/product_mating_pairs/{relationId}": {
+      "schema": "ProductMatingPairRelation",
+      "description": "Konnektor-Konnektor és Saru-Saru ellenpár kapcsolatok gyűjteménye"
+    },
+    "/product_terminal_fejek/{relationId}": {
+      "schema": "ProductTerminalFejRelation",
+      "description": "Saru és Saruzófej kapcsolatok gyűjteménye (kétirányú)"
+    },
+    "/product_notes/{noteId}": {
+      "schema": "ProductNote",
+      "description": "Termékekhez csatolt Notesz megjegyzések gyűjteménye"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Felhasználói profilok és szerepkörök gyűjteménye"
+    },
+    "/kanban_items/{docId}": {
+      "schema": "KanbanItem",
+      "description": "Kanban tábla feladatok gyűjteménye"
+    }
+  }
+}

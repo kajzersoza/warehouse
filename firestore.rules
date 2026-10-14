@@ -1,0 +1,339 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 256 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['productId', 'name'])
+        && data.keys().hasOnly([
+          'productId', 'name', 'description', 'category', 'manufacturer',
+          'feeding', 'insulationType', 'factoryCode', 'insulationGripperType',
+          'connectorType', 'terminalType', 'date', 'images', 'stockQuantity',
+          'location', 'positionsCount', 'updatedAt'
+        ])
+        && data.productId is string && data.productId.size() <= 100
+        && data.name is string && data.name.size() <= 200
+        && (!('description' in data) || (data.description is string && data.description.size() <= 1000))
+        && (!('category' in data) || (data.category is string && data.category.size() <= 100))
+        && (!('manufacturer' in data) || (data.manufacturer is string && data.manufacturer.size() <= 100))
+        && (!('feeding' in data) || (data.feeding is string && data.feeding.size() <= 100))
+        && (!('insulationType' in data) || (data.insulationType is string && data.insulationType.size() <= 100))
+        && (!('factoryCode' in data) || (data.factoryCode is string && data.factoryCode.size() <= 100))
+        && (!('insulationGripperType' in data) || (data.insulationGripperType is string && data.insulationGripperType.size() <= 100))
+        && (!('connectorType' in data) || (data.connectorType is string && data.connectorType.size() <= 100))
+        && (!('terminalType' in data) || (data.terminalType is string && data.terminalType.size() <= 100))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 50))
+        && (!('images' in data) || (data.images is list && data.images.size() <= 20))
+        && (!('stockQuantity' in data) || data.stockQuantity is number)
+        && (!('location' in data) || (data.location is string && data.location.size() <= 100))
+        && (!('positionsCount' in data) || (data.positionsCount is number && data.positionsCount >= 1 && data.positionsCount <= 999))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductComponent(data) {
+      return data.keys().hasAll(['parentProductId', 'componentProductId'])
+        && data.keys().hasOnly(['id', 'parentProductId', 'componentProductId', 'quantity', 'updatedAt'])
+        && data.parentProductId is string && data.parentProductId.size() <= 100
+        && data.componentProductId is string && data.componentProductId.size() <= 100
+        && (!('quantity' in data) || (data.quantity is number && data.quantity >= 1))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 250))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductMeterBox(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'quantity', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('quantity' in data) || (data.quantity is number && data.quantity >= 1))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductConnectorTerminal(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'quantity', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('quantity' in data) || (data.quantity is number && data.quantity >= 1))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductMatingPair(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'quantity', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('quantity' in data) || (data.quantity is number && data.quantity >= 1))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductTerminalFej(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'quantity', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('quantity' in data) || (data.quantity is number && data.quantity >= 1))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductTerminalFejDisconnection(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductNote(data) {
+      return data.keys().hasAll(['productId', 'title'])
+        && data.keys().hasOnly(['id', 'productId', 'title', 'description', 'date', 'url', 'nameChoice', 'images', 'createdAt', 'updatedAt'])
+        && data.productId is string && data.productId.size() <= 100
+        && data.title is string && data.title.size() <= 200
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 50))
+        && (!('url' in data) || (data.url is string && data.url.size() <= 500))
+        && (!('nameChoice' in data) || (data.nameChoice is string && data.nameChoice.size() <= 100))
+        && (!('images' in data) || (data.images is list && data.images.size() <= 20))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'role'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'secondaryEmail', 'role', 'createdAt', 'updatedAt'])
+        && data.email is string && data.email.size() <= 200
+        && data.role in ['admin', 'editor', 'viewer']
+        && (!('uid' in data) || (data.uid is string && data.uid.size() <= 128))
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 200))
+        && (!('secondaryEmail' in data) || (data.secondaryEmail is string && data.secondaryEmail.size() <= 200))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidWarehousePosition(data) {
+      return data.keys().hasAll(['id', 'name'])
+        && data.keys().hasOnly(['id', 'name', 'description', 'zone', 'isCustom', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id.size() <= 100
+        && data.name is string && data.name.size() <= 100
+        && (!('description' in data) || (data.description is string && data.description.size() <= 500))
+        && (!('zone' in data) || (data.zone is string && data.zone.size() <= 100))
+        && (!('isCustom' in data) || data.isCustom is bool)
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidWarehouseTransaction(data) {
+      return data.keys().hasAll(['positionId', 'productId', 'quantity'])
+        && data.keys().hasOnly(['id', 'positionId', 'productId', 'quantity', 'date', 'note', 'createdAt', 'updatedAt'])
+        && data.positionId is string && data.positionId.size() <= 100
+        && data.productId is string && data.productId.size() <= 100
+        && data.quantity is number
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 50))
+        && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidProductMaintenance(data) {
+      return data.keys().hasAll(['productId'])
+        && data.productId is string && data.productId.size() <= 100
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 100))
+        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && (!('changeItem' in data) || (data.changeItem is string && data.changeItem.size() <= 500))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 100))
+        && (!('factoryCode' in data) || (data.factoryCode is string && data.factoryCode.size() <= 100))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidKanbanItem(data) {
+      return data.keys().hasAll(['productIds', 'status'])
+        && data.productIds is list && data.productIds.size() <= 50
+        && data.status in ['new', 'in_progress', 'completed']
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('title' in data) || (data.title is string && data.title.size() <= 200))
+        && (!('note' in data) || (data.note is string && data.note.size() <= 2000))
+        && (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 50))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50))
+        && (!('createdBy' in data) || (data.createdBy is string && data.createdBy.size() <= 100));
+    }
+
+    // Products Collection
+    match /products/{docId} {
+      // Allow reading products
+      allow get, list: if true;
+
+      // Allow creating product with valid ID and payload
+      allow create: if isValidId(docId)
+        && isValidProduct(incoming())
+        && (isSignedIn() || true); // Allow warehouse management in prototype or with auth
+
+      // Allow updates adhering to validation
+      allow update: if isValidId(docId)
+        && isValidProduct(incoming());
+
+      // Allow deletion
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Components Collection (Built-in parts / Beépülő alkatrészek)
+    match /product_components/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductComponent(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductComponent(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Meter Box Relations (Termék <-> Mérődoboz kapcsolatok)
+    match /product_meterboxes/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductMeterBox(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductMeterBox(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Connector Terminal Relations (Konnektor <-> Saru kapcsolatok)
+    match /product_connector_terminals/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductConnectorTerminal(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductConnectorTerminal(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Mating Pair Relations (Konnektor <-> Konnektor, Saru <-> Saru ellenpárok)
+    match /product_mating_pairs/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductMatingPair(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductMatingPair(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Terminal-Fej Relations (Saru <-> Saruzófej kapcsolatok)
+    match /product_terminal_fejek/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductTerminalFej(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductTerminalFej(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Terminal-Fej Disconnections (Leválasztott Saru <-> Saruzófej kapcsolatok)
+    match /product_terminal_fej_disconnections/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductTerminalFejDisconnection(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductTerminalFejDisconnection(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Notes Collection (Notesz bejegyzések, megjegyzések, fényképek)
+    match /product_notes/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductNote(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductNote(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Users Collection (Profiles & RBAC Roles)
+    match /users/{userId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(userId)
+        && isValidUser(incoming());
+
+      allow update: if isValidId(userId)
+        && isValidUser(incoming());
+
+      allow delete: if isValidId(userId);
+    }
+
+    // Warehouse Positions Collection (Raktár pozíciók)
+    match /warehouse_positions/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && isValidWarehousePosition(incoming());
+      allow delete: if isValidId(docId);
+    }
+
+    // Warehouse Transactions Collection (Raktári készletmozgások / tranzakciók)
+    match /warehouse_transactions/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && isValidWarehouseTransaction(incoming());
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Maintenances Collection (Karbantartások)
+    match /product_maintenances/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && isValidProductMaintenance(incoming());
+      allow delete: if isValidId(docId);
+    }
+
+    // Kanban Items Collection (Kanban feladatok)
+    match /kanban_items/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && isValidKanbanItem(incoming());
+      allow delete: if isValidId(docId);
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Raktár és Termék Menedzser",
+  "description": "Egyszerű, világos témájú raktár- és termékkezelő alkalmazás nagy, jól olvasható betűkkel, keresővel, CSV feltöltéssel és képgalériával.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
