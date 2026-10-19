@@ -247,6 +247,23 @@ async function migrateProductIdReferences(oldId: string, newId: string): Promise
         if (changed) localStorage.setItem('raktar_app_notes_v1', JSON.stringify(updated));
       }
     }
+
+    // 7. Warehouse Transactions: raktar_warehouse_transactions_v1
+    const rawTx = localStorage.getItem('raktar_warehouse_transactions_v1');
+    if (rawTx) {
+      const list = JSON.parse(rawTx);
+      if (Array.isArray(list)) {
+        let changed = false;
+        const updated = list.map((tx: any) => {
+          if (tx.productId === oldId) {
+            changed = true;
+            return { ...tx, productId: newId, updatedAt: new Date().toISOString() };
+          }
+          return tx;
+        });
+        if (changed) localStorage.setItem('raktar_warehouse_transactions_v1', JSON.stringify(updated));
+      }
+    }
   } catch (err) {
     console.warn('Error migrating local storage relation references:', err);
   }

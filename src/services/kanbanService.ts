@@ -171,17 +171,25 @@ export async function saveKanbanItem(item: KanbanItem): Promise<void> {
  * Delete a Kanban item
  */
 export async function deleteKanbanItem(id: string): Promise<void> {
-  const cleanId = sanitizeDocId(id.trim());
+  const rawId = (id || '').trim();
+  const cleanId = sanitizeDocId(rawId);
 
   // 1. Remove from localStorage
   const local = getLocalStoredKanbanItems();
-  const filtered = local.filter((k) => k.id !== cleanId);
+  const filtered = local.filter(
+    (k) => k.id !== cleanId && k.id !== rawId && k.id.trim() !== rawId
+  );
   saveLocalKanbanItems(filtered);
 
   // 2. Remove from Firestore
   try {
     const docRef = doc(db, KANBAN_COLLECTION, cleanId);
     await deleteDoc(docRef);
+    if (cleanId !== rawId && rawId) {
+      try {
+        await deleteDoc(doc(db, KANBAN_COLLECTION, rawId));
+      } catch (_) {}
+    }
   } catch (err) {
     console.warn('Failed to delete Kanban item from Firestore, removed locally:', err);
   }

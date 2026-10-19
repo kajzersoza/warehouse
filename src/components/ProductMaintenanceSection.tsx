@@ -56,6 +56,11 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
   const [changeItemSearch, setChangeItemSearch] = useState('');
   const [isSelectingChangeItem, setIsSelectingChangeItem] = useState(false);
 
+  // In-app delete confirmation states (replaces window.confirm)
+  const [maintenanceToDelete, setMaintenanceToDelete] = useState<MaintenanceRecord | null>(null);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [isDeletingSingle, setIsDeletingSingle] = useState(false);
+
   const showModal = isAddModalOpen || internalModalOpen;
 
   const handleOpenNew = () => {
@@ -106,19 +111,23 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Biztosan törölni szeretné ezt a karbantartási tételt?')) return;
+  const handleConfirmDelete = async () => {
+    if (!maintenanceToDelete) return;
+    const id = maintenanceToDelete.id;
+    setIsDeletingSingle(true);
     try {
       await onDeleteMaintenance(id);
+      setMaintenanceToDelete(null);
     } catch (err) {
       console.error('Failed to delete maintenance:', err);
+    } finally {
+      setIsDeletingSingle(false);
     }
   };
 
-  const handleDeleteAllForThisProduct = async () => {
+  const handleConfirmDeleteAll = async () => {
     if (!onDeleteAllForProduct) return;
-    const confirmMsg = `Biztosan törölni szeretné a(z) ${productId} termékhez tartozó MINDEN (${maintenances.length} db) karbantartási tételt?`;
-    if (!window.confirm(confirmMsg)) return;
+    setShowDeleteAllConfirm(false);
     setIsDeletingAll(true);
     try {
       await onDeleteAllForProduct(productId);
@@ -244,7 +253,7 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
               {maintenances.length > 0 && onDeleteAllForProduct && (
                 <button
                   type="button"
-                  onClick={handleDeleteAllForThisProduct}
+                  onClick={() => setShowDeleteAllConfirm(true)}
                   disabled={isDeletingAll}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-950/40 hover:bg-rose-900/60 text-amber-200 hover:text-white font-bold text-xs sm:text-sm transition-colors cursor-pointer border border-amber-600/50 hover:border-rose-400"
                   title="Összes karbantartás törlése ennél a terméknél"
@@ -365,7 +374,10 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
                         <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => handleOpenEdit(rec)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEdit(rec);
+                            }}
                             className="p-1.5 text-stone-600 hover:text-[#7B4B29] hover:bg-amber-100 rounded-lg transition-colors cursor-pointer"
                             title="Szerkesztés"
                           >
@@ -373,7 +385,10 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(rec.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMaintenanceToDelete(rec);
+                            }}
                             className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                             title="Törlés"
                           >
@@ -602,6 +617,117 @@ export const ProductMaintenanceSection: React.FC<ProductMaintenanceSectionProps>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Egyedi Karbantartás Törlés Megerősítő Modális Ablak (iframe-kompatibilis) */}
+      {maintenanceToDelete && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-red-200">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-stone-900">
+                  Karbantartási tétel törlése
+                </h3>
+                <p className="text-xs text-stone-500">
+                  Ez a művelet nem vonható vissza
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-stone-700">
+              Biztosan törölni szeretné ezt a karbantartási bejegyzést?
+            </p>
+
+            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-stone-500">Dátum:</span>
+                <span className="font-mono font-bold text-stone-800">{maintenanceToDelete.date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500">Státusz:</span>
+                <span className="font-black text-stone-900">{maintenanceToDelete.status}</span>
+              </div>
+              {maintenanceToDelete.changeItem && (
+                <div className="flex justify-between">
+                  <span className="text-stone-500">Kicserélt alkatrész:</span>
+                  <span className="font-mono font-bold text-amber-900">{maintenanceToDelete.changeItem}</span>
+                </div>
+              )}
+              {maintenanceToDelete.description && (
+                <div className="pt-1 text-stone-600 italic border-t border-stone-200">
+                  "{maintenanceToDelete.description}"
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                disabled={isDeletingSingle}
+                onClick={() => setMaintenanceToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingSingle}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeletingSingle ? 'Törlés...' : 'Igen, törlés'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Összes Karbantartás Törlése Megerősítő Modális Ablak (iframe-kompatibilis) */}
+      {showDeleteAllConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-rose-300">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-rose-950">
+                  Összes karbantartás törlése
+                </h3>
+                <p className="text-xs text-rose-600">
+                  Figyelem! Ez a művelet végleges
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-stone-700">
+              Biztosan törölni szeretné a(z) <strong className="font-mono text-stone-900">{productId}</strong> termékhez tartozó <strong>MINDEN ({maintenances.length} db)</strong> karbantartási tételt?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllConfirm(false)}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors cursor-pointer"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteAll}
+                disabled={isDeletingAll}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeletingAll ? 'Törlés folyamatban...' : 'Igen, összes törlése'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

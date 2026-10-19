@@ -18,13 +18,15 @@ import {
   Check,
   Plus,
   SlidersHorizontal,
-  RotateCcw
+  RotateCcw,
+  Pin
 } from 'lucide-react';
 import { Product, WarehouseTransaction } from '../types/product';
 import { naturalCompare } from '../utils/sortHelper';
 import { isConnectorCategory } from '../services/connectorTerminalService';
 import { KanbanItem, KanbanStatus, KANBAN_STATUS_CONFIG } from '../types/kanban';
 import { getProductKanbanStatus } from '../services/kanbanService';
+import { PinnedProductsTray } from './PinnedProductsTray';
 
 export interface ActiveFilter {
   type: 'category' | 'manufacturer' | 'feeding';
@@ -54,6 +56,11 @@ interface ProductListViewProps {
   initialFilter?: ActiveFilter | null;
   onClearFilter?: () => void;
   onNavigateToWarehousePosition?: (positionId: string) => void;
+  pinnedProductIds?: string[];
+  onTogglePin?: (productId: string) => void;
+  onRemovePin?: (productId: string) => void;
+  onClearAllPins?: () => void;
+  onSelectPinnedProduct?: (product: Product) => void;
 }
 
 export const ProductListView: React.FC<ProductListViewProps> = ({
@@ -67,7 +74,12 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
   onNavigateToKanban,
   initialFilter,
   onClearFilter,
-  onNavigateToWarehousePosition
+  onNavigateToWarehousePosition,
+  pinnedProductIds = [],
+  onTogglePin,
+  onRemovePin,
+  onClearAllPins,
+  onSelectPinnedProduct
 }) => {
   const saved = useMemo(() => getSavedListFilters(), []);
 
@@ -400,7 +412,7 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
   return (
     <div className="w-full max-w-7xl mx-auto space-y-5 pb-16">
       {/* Search Bar & Primary Actions */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-4">
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-3 sm:space-y-4">
         {/* Row 1: Category selector on the LEFT + Search input on the RIGHT */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
           {/* Category Dropdown on the LEFT */}
@@ -1041,9 +1053,38 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
                     <div className="flex-1 min-w-0">
                       {/* ID and Stock Row */}
                       <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-mono font-black text-base sm:text-lg text-[#1e6075] tracking-tight break-all">
-                          {p.productId}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-black text-base sm:text-lg text-[#1e6075] tracking-tight break-all">
+                            {p.productId}
+                          </span>
+                          {onTogglePin && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onTogglePin(p.productId);
+                              }}
+                              className={`p-1 rounded-md transition-colors cursor-pointer ${
+                                pinnedProductIds?.includes(p.productId)
+                                  ? 'text-amber-600 bg-amber-50 border border-amber-300'
+                                  : 'text-stone-400 hover:text-amber-600 hover:bg-stone-100'
+                              }`}
+                              title={
+                                pinnedProductIds?.includes(p.productId)
+                                  ? 'Kitűzés megszüntetése'
+                                  : 'Kitűzés a gyorssávra'
+                              }
+                            >
+                              <Pin
+                                className={`w-3.5 h-3.5 ${
+                                  pinnedProductIds?.includes(p.productId)
+                                    ? 'rotate-45 fill-amber-500'
+                                    : ''
+                                }`}
+                              />
+                            </button>
+                          )}
+                        </div>
                         {(() => {
                           const whInfo = productWarehouseMap.get(p.productId.trim().toLowerCase());
                           const effectiveStock =
@@ -1052,32 +1093,9 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
                               : p.stockQuantity !== undefined && p.stockQuantity !== null && !isNaN(Number(p.stockQuantity))
                               ? Number(p.stockQuantity)
                               : 0;
-                          const primaryPositions = (whInfo && whInfo.positions.length > 0)
-                            ? whInfo.positions
-                            : (p.location ? [p.location] : []);
 
                           return (
                             <div className="flex items-center gap-1.5 shrink-0">
-                              {primaryPositions.length > 0 && (
-                                <div className="flex items-center gap-1">
-                                  {primaryPositions.map((pos) => (
-                                    <button
-                                      key={pos}
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (onNavigateToWarehousePosition) {
-                                          onNavigateToWarehousePosition(pos);
-                                        }
-                                      }}
-                                      className="font-mono font-bold text-xs px-2 py-0.5 rounded-full bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-900 border border-blue-200 transition-colors cursor-pointer"
-                                      title={`Ugrás a(z) ${pos} raktári pozícióra`}
-                                    >
-                                      {pos}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
                               <span
                                 className={`font-mono font-black text-xs px-2.5 py-0.5 rounded-full border ${
                                   effectiveStock > 0
@@ -1259,7 +1277,7 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
                     <th className="py-2.5 px-2 hidden md:table-cell text-left w-24 lg:w-32 leading-tight">
                       Kategória
                     </th>
-                    <th className="py-2.5 px-2 text-center whitespace-nowrap w-24 lg:w-28">
+                    <th className="py-2.5 px-2 hidden md:table-cell text-center whitespace-nowrap w-24 lg:w-28">
                       Raktár Pozíció
                     </th>
                     <th className="py-2.5 px-2 text-center whitespace-nowrap w-20">
@@ -1312,17 +1330,46 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
 
                         {/* Termék ID */}
                         <td className="py-3 px-2.5 sm:px-3.5 font-mono leading-snug">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectProduct(p);
-                            }}
-                            className="font-black text-base sm:text-lg lg:text-xl text-[#1e6075] hover:text-[#0f3f4e] hover:bg-[#79B6B8]/20 px-2 py-1 -mx-1 rounded-lg transition-all duration-200 focus:outline-none cursor-pointer text-left tracking-tight break-words break-all inline-block"
-                            title="Adatlap megnyitása"
-                          >
-                            {p.productId}
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectProduct(p);
+                              }}
+                              className="font-black text-base sm:text-lg lg:text-xl text-[#1e6075] hover:text-[#0f3f4e] hover:bg-[#79B6B8]/20 px-2 py-1 -mx-1 rounded-lg transition-all duration-200 focus:outline-none cursor-pointer text-left tracking-tight break-words break-all inline-block"
+                              title="Adatlap megnyitása"
+                            >
+                              {p.productId}
+                            </button>
+                            {onTogglePin && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onTogglePin(p.productId);
+                                }}
+                                className={`p-1 rounded-md transition-colors cursor-pointer ${
+                                  pinnedProductIds?.includes(p.productId)
+                                    ? 'text-amber-600 bg-amber-50 border border-amber-300'
+                                    : 'text-stone-300 hover:text-amber-600 hover:bg-stone-100'
+                                }`}
+                                title={
+                                  pinnedProductIds?.includes(p.productId)
+                                    ? 'Kitűzés megszüntetése'
+                                    : 'Kitűzés a gyorssávra'
+                                }
+                              >
+                                <Pin
+                                  className={`w-3.5 h-3.5 ${
+                                    pinnedProductIds?.includes(p.productId)
+                                      ? 'rotate-45 fill-amber-500'
+                                      : ''
+                                  }`}
+                                />
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* Név */}
@@ -1368,8 +1415,8 @@ export const ProductListView: React.FC<ProductListViewProps> = ({
                           </div>
                         </td>
 
-                        {/* Raktár Pozíció */}
-                        <td className="py-3 px-2 sm:px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        {/* Raktár Pozíció - Mobilon elrejtve, csak asztali nézetben jelenik meg */}
+                        <td className="py-3 px-2 sm:px-3 text-center hidden md:table-cell" onClick={(e) => e.stopPropagation()}>
                           {primaryPositions.length > 0 ? (
                             <div className="flex flex-wrap items-center justify-center gap-1">
                               {primaryPositions.map((pos) => (

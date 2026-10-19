@@ -894,9 +894,9 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({
   };
 
   const [isDeletingAllDbMaintenances, setIsDeletingAllDbMaintenances] = useState(false);
+  const [showConfirmDeleteAllMaintenances, setShowConfirmDeleteAllMaintenances] = useState(false);
 
-  const handleDeleteAllDbMaintenances = async () => {
-    if (!window.confirm('Biztosan törölni szeretné az ÖSSZES karbantartási adatot az adatbázisból? Ez a művelet nem vonható vissza.')) return;
+  const handleExecuteDeleteAllDbMaintenances = async () => {
     setIsDeletingAllDbMaintenances(true);
     try {
       const res = await deleteAllMaintenances();
@@ -907,11 +907,14 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({
         count: res.count,
         error: undefined
       });
-      alert(`Sikeres törlés! ${res.count} db karbantartási tétel törölve az adatbázisból.`);
+      setShowConfirmDeleteAllMaintenances(false);
       onImportComplete();
     } catch (err: any) {
       console.error('Delete all maintenances error:', err);
-      alert('Nem sikerült törölni a karbantartásokat: ' + err?.message);
+      setMaintenanceUploadResult({
+        count: 0,
+        error: 'Nem sikerült törölni a karbantartásokat: ' + err?.message
+      });
     } finally {
       setIsDeletingAllDbMaintenances(false);
     }
@@ -3049,7 +3052,7 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={handleDeleteAllDbMaintenances}
+                    onClick={() => setShowConfirmDeleteAllMaintenances(true)}
                     disabled={isDeletingAllDbMaintenances}
                     className="px-3.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-800 font-bold text-xs transition-colors cursor-pointer border border-rose-300 flex items-center gap-1.5 disabled:opacity-50"
                     title="Összes karbantartási adat végleges törlése az adatbázisból"
@@ -3238,6 +3241,50 @@ export const CsvImportView: React.FC<CsvImportViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Karbantartás Adatbázis Összes Törlése Megerősítő Modális Ablak (iframe-kompatibilis) */}
+      {showConfirmDeleteAllMaintenances && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-rose-300">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-rose-950">
+                  Összes karbantartási adat törlése
+                </h3>
+                <p className="text-xs text-rose-600">
+                  Figyelem! Ez a művelet végleges és nem visszavonható
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-stone-700">
+              Biztosan törölni szeretné az <strong>ÖSSZES</strong> karbantartási adatot az adatbázisból és a helyi tárolóból?
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setShowConfirmDeleteAllMaintenances(false)}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors cursor-pointer"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteDeleteAllDbMaintenances}
+                disabled={isDeletingAllDbMaintenances}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeletingAllDbMaintenances ? 'Törlés folyamatban...' : 'Igen, összes törlése'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

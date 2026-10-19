@@ -35,9 +35,11 @@ import {
   RotateCcw,
   ArrowRightLeft,
   Minus,
-  Info
+  Info,
+  Pin,
+  Sparkles
 } from 'lucide-react';
-import { Product, ProductComponentRelation, ProductMeterBoxRelation, ProductConnectorTerminalRelation, ProductMatingPairRelation, ProductTerminalFejRelation, ProductTerminalFejDisconnection, ProductNote, WarehouseTransaction } from '../types/product';
+import { Product, ProductComponentRelation, ProductMeterBoxRelation, ProductConnectorTerminalRelation, ProductMatingPairRelation, ProductSimilarRelation, ProductTerminalFejRelation, ProductTerminalFejDisconnection, ProductNote, WarehouseTransaction } from '../types/product';
 import { ImageGalleryWithZoom } from './ImageGalleryWithZoom';
 import { ComboboxInput } from './ComboboxInput';
 import {
@@ -57,6 +59,10 @@ import {
   isMatingPairRelatedCategory
 } from '../services/matingPairService';
 import {
+  getConnectedSimilarsForProduct,
+  getSimilarRelationsMapForProduct
+} from '../services/similarProductService';
+import {
   getConnectedTerminalFejekForProduct,
   getDisconnectedTerminalFejekForProduct,
   isTerminalFejRelatedCategory,
@@ -74,6 +80,7 @@ import { ProductMaintenanceSection } from './ProductMaintenanceSection';
 import { getMaintenancesForProduct } from '../services/maintenanceService';
 import { KanbanItem, KANBAN_STATUS_CONFIG } from '../types/kanban';
 import { getProductKanbanStatus } from '../services/kanbanService';
+import { deleteWarehouseTransaction } from '../services/warehouseService';
 
 interface ProductDetailProps {
   product: Product;
@@ -104,18 +111,24 @@ interface ProductDetailProps {
   onDeleteConnectorTerminalRelation?: (productId1: string, productId2: string) => Promise<void>;
   onAddMatingPairRelation?: (productId1: string, productId2: string, quantity?: number) => Promise<void>;
   onDeleteMatingPairRelation?: (productId1: string, productId2: string) => Promise<void>;
+  similarRelations?: ProductSimilarRelation[];
+  onAddSimilarRelation?: (productId1: string, productId2: string, note?: string) => Promise<void>;
+  onDeleteSimilarRelation?: (productId1: string, productId2: string) => Promise<void>;
   onAddTerminalFejRelation?: (productId1: string, productId2: string, quantity?: number) => Promise<void>;
   onDeleteTerminalFejRelation?: (productId1: string, productId2: string) => Promise<void>;
   terminalFejDisconnections?: ProductTerminalFejDisconnection[];
   warehouseTransactions?: WarehouseTransaction[];
   onNavigateToWarehousePosition?: (positionId: string) => void;
   onNavigateToWarehouseMovement?: (productId: string, positionId?: string) => void;
+  onDeleteWarehouseTransaction?: (txId: string) => Promise<void>;
   onSaveProductNote?: (note: ProductNote) => Promise<void>;
   onDeleteProductNote?: (noteId: string) => Promise<void>;
   onSaveMaintenance?: (record: Partial<MaintenanceRecord> & { productId: string }) => Promise<void>;
   onDeleteMaintenance?: (recordId: string) => Promise<void>;
   onDeleteAllMaintenanceForProduct?: (productId: string) => Promise<void>;
   canEdit?: boolean;
+  isPinned?: boolean;
+  onTogglePin?: (productId: string) => void;
 }
 
 export const ProductDetail: React.FC<ProductDetailProps> = ({
@@ -125,6 +138,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   meterBoxRelations = [],
   connectorTerminalRelations = [],
   matingPairRelations = [],
+  similarRelations = [],
   terminalFejRelations = [],
   terminalFejDisconnections = [],
   warehouseTransactions = [],
@@ -143,6 +157,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   onNavigateToDataImport,
   onNavigateToWarehousePosition,
   onNavigateToWarehouseMovement,
+  onDeleteWarehouseTransaction,
   onAddComponentRelation,
   onDeleteComponentRelation,
   onAddMeterBoxRelation,
@@ -151,6 +166,8 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   onDeleteConnectorTerminalRelation,
   onAddMatingPairRelation,
   onDeleteMatingPairRelation,
+  onAddSimilarRelation,
+  onDeleteSimilarRelation,
   onAddTerminalFejRelation,
   onDeleteTerminalFejRelation,
   onSaveProductNote,
@@ -158,7 +175,9 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   onSaveMaintenance,
   onDeleteMaintenance,
   onDeleteAllMaintenanceForProduct,
-  canEdit = true
+  canEdit = true,
+  isPinned = false,
+  onTogglePin
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Product>({ ...product });
@@ -168,6 +187,25 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isRelationMenuOpen, setIsRelationMenuOpen] = useState(false);
   const [isAddMaintenanceModalOpen, setIsAddMaintenanceModalOpen] = useState(false);
+  const [txToDelete, setTxToDelete] = useState<WarehouseTransaction | null>(null);
+  const [isDeletingTx, setIsDeletingTx] = useState(false);
+
+  const handleConfirmDeleteTx = async () => {
+    if (!txToDelete) return;
+    setIsDeletingTx(true);
+    try {
+      if (onDeleteWarehouseTransaction) {
+        await onDeleteWarehouseTransaction(txToDelete.id);
+      } else {
+        await deleteWarehouseTransaction(txToDelete.id);
+      }
+      setTxToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete warehouse transaction:', err);
+    } finally {
+      setIsDeletingTx(false);
+    }
+  };
 
   // Sync internal form data whenever the viewed product changes
   React.useEffect(() => {
@@ -256,6 +294,16 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   const [isUpdatingMatingPairQuantity, setIsUpdatingMatingPairQuantity] = useState(false);
   const [isAddingMatingPair, setIsAddingMatingPair] = useState(false);
   const [matingPairActionMessage, setMatingPairActionMessage] = useState<string | null>(null);
+
+  // Hasonló termékek kapcsolat state (Lila téma - Bármely termékhez bármely termék)
+  const [similarSearchTerm, setSimilarSearchTerm] = useState('');
+  const [showAddSimilarModal, setShowAddSimilarModal] = useState(false);
+  const [newSimilarIdInput, setNewSimilarIdInput] = useState('');
+  const [newSimilarNoteInput, setNewSimilarNoteInput] = useState('');
+  const [isAddingSimilar, setIsAddingSimilar] = useState(false);
+  const [similarActionMessage, setSimilarActionMessage] = useState<string | null>(null);
+  const [similarToDelete, setSimilarToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingSimilar, setIsDeletingSimilar] = useState(false);
 
   // Saru <-> Saruzófej relations state (Halvány narancssárga téma)
   const [terminalFejSearchTerm, setTerminalFejSearchTerm] = useState('');
@@ -914,6 +962,118 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     );
   }, [product.category, product.name, resolvedTerminalFejek.length, disconnectedTerminalFejek.length]);
 
+  // --- 8. Hasonló termékek memos (Lila téma - Bármely termékhez bármely termék) ---
+  const uniqueSimilarIds = useMemo(() => {
+    return getConnectedSimilarsForProduct(product.productId, similarRelations);
+  }, [product.productId, similarRelations]);
+
+  const similarRelationsMap = useMemo(() => {
+    return getSimilarRelationsMapForProduct(product.productId, similarRelations);
+  }, [product.productId, similarRelations]);
+
+  const resolvedSimilarProducts = useMemo(() => {
+    const productMap = new Map<string, Product>();
+    allProducts.forEach((p) => {
+      if (p.productId) productMap.set(p.productId.trim().toLowerCase(), p);
+      if (p.factoryCode) productMap.set(p.factoryCode.trim().toLowerCase(), p);
+      if (p.id) productMap.set(p.id.trim().toLowerCase(), p);
+    });
+
+    const list = uniqueSimilarIds.map((sId) => {
+      const found = productMap.get(sId.trim().toLowerCase());
+      const rel = similarRelationsMap.get(sId.trim().toLowerCase());
+      const note = rel?.note;
+      if (found) {
+        return { id: sId, product: found, isRegistered: true, note };
+      }
+      return {
+        id: sId,
+        product: {
+          id: sId,
+          productId: sId,
+          name: `Hasonló termék (${sId})`,
+          category: 'Hasonló',
+          images: [],
+          stockQuantity: 0,
+          factoryCode: ''
+        } as Product,
+        isRegistered: false,
+        note
+      };
+    });
+
+    return list.sort((a, b) => {
+      const nameA = a.product.name || a.product.productId || '';
+      const nameB = b.product.name || b.product.productId || '';
+      return nameA.localeCompare(nameB, 'hu', { numeric: true, sensitivity: 'base' });
+    });
+  }, [uniqueSimilarIds, allProducts, similarRelationsMap]);
+
+  const searchSimilarSuggestions = useMemo(() => {
+    const q = newSimilarIdInput.trim().toLowerCase();
+    const currentPid = (product.productId || '').trim().toLowerCase();
+
+    const candidates = allProducts.filter(
+      (p) => p && p.productId && p.productId.trim().toLowerCase() !== currentPid
+    );
+
+    if (!q) {
+      return candidates
+        .filter((p) => !uniqueSimilarIds.some((id) => id.trim().toLowerCase() === p.productId.trim().toLowerCase()))
+        .slice(0, 15);
+    }
+
+    const matched = candidates.filter((p) => {
+      const pid = (p.productId || '').toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      const factory = (p.factoryCode || '').toLowerCase();
+      const cat = (p.category || '').toLowerCase();
+      return pid.includes(q) || name.includes(q) || factory.includes(q) || cat.includes(q);
+    });
+
+    matched.sort((a, b) => {
+      const aId = (a.productId || '').toLowerCase();
+      const bId = (b.productId || '').toLowerCase();
+      if (aId === q && bId !== q) return -1;
+      if (aId !== q && bId === q) return 1;
+      return (a.name || '').localeCompare(b.name || '', 'hu', { numeric: true });
+    });
+
+    return matched.slice(0, 20);
+  }, [newSimilarIdInput, allProducts, product.productId, uniqueSimilarIds]);
+
+  const exactMatchedSimilar = useMemo(() => {
+    const q = newSimilarIdInput.trim().toLowerCase();
+    if (!q) return null;
+    return allProducts.find(
+      (p) =>
+        p &&
+        p.productId &&
+        p.productId.trim().toLowerCase() !== (product.productId || '').trim().toLowerCase() &&
+        (p.productId.trim().toLowerCase() === q ||
+          (p.factoryCode && p.factoryCode.trim().toLowerCase() === q))
+    ) || null;
+  }, [newSimilarIdInput, allProducts, product.productId]);
+
+  const isSelectedSimilarAlreadyAttached = useMemo(() => {
+    const q = newSimilarIdInput.trim().toLowerCase();
+    if (!q) return false;
+    return uniqueSimilarIds.some((id) => id.trim().toLowerCase() === q);
+  }, [newSimilarIdInput, uniqueSimilarIds]);
+
+  const filteredResolvedSimilarProducts = useMemo(() => {
+    if (!similarSearchTerm.trim()) return resolvedSimilarProducts;
+    const q = similarSearchTerm.trim().toLowerCase();
+    return resolvedSimilarProducts.filter(
+      (item) =>
+        item.id.toLowerCase().includes(q) ||
+        item.product.name.toLowerCase().includes(q) ||
+        (item.product.factoryCode && item.product.factoryCode.toLowerCase().includes(q)) ||
+        (item.product.category && item.product.category.toLowerCase().includes(q)) ||
+        (item.note && item.note.toLowerCase().includes(q))
+    );
+  }, [resolvedSimilarProducts, similarSearchTerm]);
+
   // Sarumagasság adatok betöltése B oszlop (productId), cikkszám vagy gyári kód alapján
   const crimpRecords = useMemo(() => {
     return getCrimpHeightsForProduct(product.productId, product.factoryCode, product.name);
@@ -1475,6 +1635,60 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
     }
   };
 
+  const handleAddSimilar = async () => {
+    const inputVal = newSimilarIdInput.trim();
+    if (!inputVal) return;
+
+    if (uniqueSimilarIds.some((id) => id.trim().toLowerCase() === inputVal.toLowerCase())) {
+      setSimilarActionMessage('Ez a termék már rögzítve van a hasonló termékek között!');
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+      return;
+    }
+
+    if (inputVal.toLowerCase() === (product.productId || '').trim().toLowerCase()) {
+      setSimilarActionMessage('Egy terméket nem lehet önmagához hasonlóként hozzáadni!');
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+      return;
+    }
+
+    setIsAddingSimilar(true);
+    try {
+      if (onAddSimilarRelation) {
+        await onAddSimilarRelation(product.productId, inputVal, newSimilarNoteInput.trim() || undefined);
+      }
+      setNewSimilarIdInput('');
+      setNewSimilarNoteInput('');
+      setShowAddSimilarModal(false);
+      setSimilarActionMessage(`Hasonló termék kapcsolat (${inputVal}) sikeresen rögzítve!`);
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+    } catch (err) {
+      console.error('Error adding similar relation:', err);
+      setSimilarActionMessage('Hiba történt a hasonló kapcsolat létrehozásakor.');
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+    } finally {
+      setIsAddingSimilar(false);
+    }
+  };
+
+  const handleConfirmDeleteSimilar = async () => {
+    if (!similarToDelete) return;
+    setIsDeletingSimilar(true);
+    try {
+      if (onDeleteSimilarRelation) {
+        await onDeleteSimilarRelation(product.productId, similarToDelete.id);
+      }
+      setSimilarActionMessage(`Hasonló kapcsolat (${similarToDelete.id}) sikeresen eltávolítva.`);
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+      setSimilarToDelete(null);
+    } catch (err) {
+      console.error('Error removing similar relation:', err);
+      setSimilarActionMessage('Hiba történt a kapcsolat eltávolításakor.');
+      setTimeout(() => setSimilarActionMessage(null), 3500);
+    } finally {
+      setIsDeletingSimilar(false);
+    }
+  };
+
   const handleAddTerminalFej = async () => {
     const inputVal = newTerminalFejIdInput.trim();
     if (!inputVal) return;
@@ -1558,25 +1772,25 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-6 pb-16">
+    <div className="w-full max-w-6xl mx-auto space-y-4 sm:space-y-6 pb-16 min-w-0 overflow-x-clip">
       {/* Top Action Bar with Vissza (1 lépést vissza) & Vissza a listához */}
-      <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-[#DBD8D5] shadow-xs">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 bg-white p-3 sm:p-5 rounded-2xl border border-[#DBD8D5] shadow-xs min-w-0">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           {/* 1. Vissza (1 lépést vissza az előző termékre vagy oldalra) */}
           <button
             type="button"
             onClick={onBack}
-            className="flex items-center gap-2 px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl bg-[#DBD8D5]/60 hover:bg-[#DBD8D5] text-[#211E1B] font-extrabold text-base sm:text-lg transition-colors cursor-pointer border border-[#DBD8D5] shadow-2xs"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-[#DBD8D5]/60 hover:bg-[#DBD8D5] text-[#211E1B] font-extrabold text-xs sm:text-base transition-colors cursor-pointer border border-[#DBD8D5] shadow-2xs"
             title={
               previousProduct
                 ? `Visszalépés 1 lépést: ${previousProduct.name} (${previousProduct.productId})`
                 : 'Visszalépés 1 lépést az előző oldalra'
             }
           >
-            <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6 text-[#3A5D6B]" />
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 text-[#3A5D6B]" />
             <span>Vissza</span>
             {previousProduct && (
-              <span className="hidden sm:inline font-mono text-sm text-[#3A5D6B] font-bold">
+              <span className="hidden md:inline font-mono text-xs text-[#3A5D6B] font-bold">
                 ({previousProduct.productId})
               </span>
             )}
@@ -1587,50 +1801,16 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             <button
               type="button"
               onClick={onGoToList}
-              className="flex items-center gap-2 px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl bg-white hover:bg-emerald-50 text-emerald-950 font-extrabold text-base sm:text-lg transition-colors cursor-pointer border-2 border-emerald-300 shadow-2xs"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-950 font-extrabold text-xs sm:text-base transition-colors cursor-pointer border-2 border-emerald-300 shadow-2xs"
               title="Vissza a fő terméklistához (a beállított szűrők és keresések megmaradnak)"
             >
-              <Layers className="w-5 h-5 text-emerald-700" />
+              <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-700" />
               <span>Vissza a listához</span>
             </button>
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Össz darabszám a felső címsor jobb oldalán */}
-          <div
-            className={`hidden md:flex items-center gap-2 px-3.5 py-2 rounded-xl border shadow-2xs font-extrabold text-sm ${
-              productTotalStock > 0
-                ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                : 'bg-red-50 text-red-800 border-red-300'
-            }`}
-            title={`Összes raktári darabszám: ${productTotalStock} db${
-              activeWarehousePositions.length === 1
-                ? ` (${activeWarehousePositions[0].positionId} pozícióban)`
-                : activeWarehousePositions.length > 1
-                ? ` (${activeWarehousePositions.length} helyen: ${activeWarehousePositions.map((p) => p.positionId).join(', ')})`
-                : ''
-            }`}
-          >
-            <span className="text-[11px] uppercase font-black opacity-75">Összkészlet:</span>
-            <span className="font-mono font-black text-base">{productTotalStock} db</span>
-            {activeWarehousePositions.length === 1 ? (
-              <span className="text-xs font-bold opacity-80 pl-1.5 border-l border-current/20 inline-flex items-center gap-0.5">
-                <MapPin className="w-3 h-3 opacity-70" />
-                <span>{activeWarehousePositions[0].positionId} pozícióban</span>
-              </span>
-            ) : activeWarehousePositions.length > 1 ? (
-              <span className="text-xs font-bold opacity-80 pl-1.5 border-l border-current/20 inline-flex items-center gap-0.5">
-                <MapPin className="w-3 h-3 opacity-70" />
-                <span>{activeWarehousePositions.length} helyen szerepel</span>
-              </span>
-            ) : (
-              <span className="text-xs font-bold opacity-60 pl-1.5 border-l border-current/20 inline-flex items-center gap-0.5">
-                <span>0 pozícióban</span>
-              </span>
-            )}
-          </div>
-
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
           {onNavigateToWarehouseMovement && (
             <button
               type="button"
@@ -1640,7 +1820,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                   activeWarehousePositions[0]?.positionId
                 )
               }
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-900 border border-blue-200 text-xs sm:text-sm font-black transition-all cursor-pointer shadow-2xs group"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2.5 rounded-xl bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-900 border border-blue-200 text-xs sm:text-sm font-black transition-all cursor-pointer shadow-2xs group"
               title={`Készletmozgás rögzítése (${formData.productId})`}
             >
               <ArrowRightLeft className="w-4 h-4 text-blue-700 group-hover:text-white" />
@@ -1690,6 +1870,27 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             );
           })()}
 
+          {/* Kitűzés a gyorssávra (jobb felső tálca) */}
+          {onTogglePin && (
+            <button
+              type="button"
+              onClick={() => onTogglePin(formData.productId)}
+              className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer shadow-2xs border ${
+                isPinned
+                  ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 ring-2 ring-amber-300'
+                  : 'bg-white hover:bg-amber-50 text-stone-800 border-[#DBD8D5] hover:border-amber-400'
+              }`}
+              title={
+                isPinned
+                  ? 'Kitűzve a gyorssávra (Kattintson az eltávolításhoz)'
+                  : 'Kitűzés a jobb felső gyorssávra (mindig látható marad)'
+              }
+            >
+              <Pin className={`w-4 h-4 ${isPinned ? 'rotate-45 fill-white' : 'text-amber-600'}`} />
+              <span className="hidden sm:inline">{isPinned ? 'Kitűzve' : 'Kitűzés'}</span>
+            </button>
+          )}
+
           {saveSuccess && (
             <span className="flex items-center gap-1.5 text-emerald-700 font-semibold text-base bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
@@ -1699,19 +1900,19 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
 
           {canEdit ? (
             !isEditing ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* Kapcsolat Hozzáadása gomb és legördülő menü */}
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setIsRelationMenuOpen(!isRelationMenuOpen)}
-                    className="flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-white hover:bg-[#3A5D6B]/5 text-[#3A5D6B] font-extrabold text-sm sm:text-base transition-all cursor-pointer border-2 border-[#3A5D6B] shadow-2xs"
+                    className="flex items-center gap-1 sm:gap-2 px-2.5 sm:px-4 py-1.5 sm:py-2.5 rounded-xl bg-white hover:bg-[#3A5D6B]/5 text-[#3A5D6B] font-extrabold text-xs sm:text-base transition-all cursor-pointer border-2 border-[#3A5D6B] shadow-2xs"
                     title="Új kapcsolat hozzáadása ehhez a termékhez"
                   >
-                    <Plus className="w-4 h-4 sm:w-5 sm:h-5 text-[#3A5D6B]" />
+                    <Plus className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-[#3A5D6B]" />
                     <span>Kapcsolat</span>
                     <ChevronDown
-                      className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#3A5D6B] transition-transform duration-200 ${
+                      className={`w-3 h-3 sm:w-4 sm:h-4 text-[#3A5D6B] transition-transform duration-200 ${
                         isRelationMenuOpen ? 'rotate-180' : ''
                       }`}
                     />
@@ -1724,7 +1925,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                         className="fixed inset-0 z-30"
                         onClick={() => setIsRelationMenuOpen(false)}
                       />
-                      <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border-2 border-[#DBD8D5] p-2 z-40 animate-fadeIn space-y-1">
+                      <div className="absolute right-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-32px)] bg-white rounded-2xl shadow-xl border-2 border-[#DBD8D5] p-2 z-40 animate-fadeIn space-y-1">
                         <div className="px-3 py-1.5 border-b border-gray-100 flex items-center justify-between">
                           <span className="text-[11px] font-black uppercase text-gray-500 tracking-wider">
                             Új Kapcsolat
@@ -1809,6 +2010,35 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                             </div>
                             <div className="text-xs text-emerald-800/80 mt-0.5 leading-snug">
                               Alkatrész vagy tartozék csatolása a termékhez
+                            </div>
+                          </div>
+                        </button>
+
+                        {/* 2b. Opció: Hasonló termék - MINDEN terméknél elérhető (Lila téma) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsRelationMenuOpen(false);
+                            setNewSimilarIdInput('');
+                            setNewSimilarNoteInput('');
+                            setShowAddSimilarModal(true);
+                          }}
+                          className="w-full text-left p-2.5 sm:p-3 rounded-xl hover:bg-purple-50 transition-colors cursor-pointer flex items-start gap-3 group border-t border-gray-100"
+                        >
+                          <div className="w-9 h-9 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                            <Sparkles className="w-5 h-5" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-extrabold text-sm text-purple-900 group-hover:text-purple-700 leading-tight flex items-center gap-1.5">
+                              <span>Hasonló</span>
+                              {uniqueSimilarIds.length > 0 && (
+                                <span className="text-[11px] font-bold px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-700">
+                                  {uniqueSimilarIds.length} db
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-0.5 leading-snug">
+                              Bármely termék hozzáadása hasonló / helyettesítő típusként
                             </div>
                           </div>
                         </button>
@@ -1925,21 +2155,21 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsEditing(true)}
-                  className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-[#3A5D6B] hover:bg-[#2F223A] text-white font-bold text-base sm:text-lg transition-colors cursor-pointer shadow-xs"
+                  className="flex items-center gap-1.5 px-3 py-1.5 sm:px-5 sm:py-2.5 rounded-xl bg-[#3A5D6B] hover:bg-[#2F223A] text-white font-bold text-xs sm:text-base transition-colors cursor-pointer shadow-xs"
                 >
-                  <Edit3 className="w-5 h-5 text-[#79B6B8]" />
+                  <Edit3 className="w-4 h-4 sm:w-5 sm:h-5 text-[#79B6B8]" />
                   <span>Szerkesztés</span>
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setFormData({ ...product });
                     setIsEditing(false);
                   }}
-                  className="px-4 py-3 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold text-base"
+                  className="px-3 py-1.5 sm:px-4 sm:py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold text-xs sm:text-base cursor-pointer"
                 >
                   Mégse
                 </button>
@@ -1947,7 +2177,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                   type="button"
                   onClick={handleSave}
                   disabled={isSaving || isDuplicateId || isIdEmpty}
-                  className="flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed text-white font-bold text-lg transition-colors cursor-pointer shadow-xs"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 sm:px-5 sm:py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-base transition-colors cursor-pointer shadow-xs"
                   title={
                     isDuplicateId
                       ? `Nem menthető: A(z) ${formData.productId?.trim()} Termék ID már foglalt!`
@@ -1956,15 +2186,15 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       : 'Változtatások Mentése'
                   }
                 >
-                  <Save className="w-5 h-5" />
-                  <span>{isSaving ? 'Mentés folyamatban...' : 'Változtatások Mentése'}</span>
+                  <Save className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span>{isSaving ? 'Mentés...' : 'Változtatások Mentése'}</span>
                 </button>
               </div>
             )
           ) : (
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-sm">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-xs sm:text-sm">
               <Eye className="w-4 h-4 text-amber-700" />
-              <span>Megtekintő Mód (Csak olvasás)</span>
+              <span>Megtekintő Mód</span>
             </div>
           )}
 
@@ -1973,9 +2203,9 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
               type="button"
               onClick={() => setShowDeleteModal(true)}
               title="Termék törlése"
-              className="p-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 transition-colors cursor-pointer"
             >
-              <Trash2 className="w-5 h-5" />
+              <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           )}
         </div>
@@ -2031,9 +2261,9 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
       )}
 
       {/* Main Content Layout: Two-column grid on desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8 items-start min-w-0">
         {/* Left Side: Images & Zoom Gallery */}
-        <div className="lg:col-span-5 bg-white p-5 sm:p-6 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-4">
+        <div className="lg:col-span-5 bg-white p-3.5 sm:p-6 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-4 min-w-0">
           <div className="flex items-center justify-between border-b border-[#DBD8D5] pb-3">
             <h3 className="font-bold text-xl text-[#3A5D6B] flex items-center gap-2">
               <span>Termék Képek</span>
@@ -2053,95 +2283,118 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
         </div>
 
         {/* Right Side: Data Sheet (Adatlap) */}
-        <div className="lg:col-span-7 bg-white p-5 sm:p-7 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-3.5">
+        <div className="lg:col-span-7 bg-white p-3.5 sm:p-6 lg:p-7 rounded-2xl border border-[#DBD8D5] shadow-xs space-y-3.5 min-w-0">
           {/* Header Banner inside Data Sheet */}
-          <div className="border-b border-[#DBD8D5] pb-3.5">
+          <div className="border-b border-[#DBD8D5] pb-3.5 min-w-0">
             {!isEditing ? (
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4 min-w-0">
                 <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-3 mb-1.5">
-                    <span className="font-mono text-2xl sm:text-3xl font-extrabold text-[#3A5D6B] tracking-tight">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1.5">
+                    <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-extrabold text-[#3A5D6B] tracking-tight break-all">
                       {formData.productId}
                     </span>
+                    {onTogglePin && (
+                      <button
+                        type="button"
+                        onClick={() => onTogglePin(formData.productId)}
+                        className={`p-1.5 sm:p-2 rounded-xl transition-all cursor-pointer shadow-2xs border ${
+                          isPinned
+                            ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-600 ring-2 ring-amber-300'
+                            : 'bg-white hover:bg-amber-50 text-stone-500 hover:text-amber-700 border-[#DBD8D5]'
+                        }`}
+                        title={
+                          isPinned
+                            ? 'Kitűzve a gyorssávra (Kattintson az eltávolításhoz)'
+                            : 'Kitűzés a gyorssávra (mindig látható fent)'
+                        }
+                      >
+                        <Pin className={`w-4 h-4 sm:w-5 sm:h-5 ${isPinned ? 'rotate-45 fill-white' : ''}`} />
+                      </button>
+                    )}
                     {formData.category && (
                       <button
                         type="button"
                         onClick={() => onFilterBy && onFilterBy('category', formData.category!)}
-                        className="text-sm font-extrabold text-[#1e6075] bg-[#79B6B8]/20 hover:bg-[#1e6075] hover:text-white px-3 py-1 rounded-full transition-all duration-200 cursor-pointer shadow-2xs"
+                        className="text-xs sm:text-sm font-extrabold text-[#1e6075] bg-[#79B6B8]/20 hover:bg-[#1e6075] hover:text-white px-2.5 sm:px-3 py-1 rounded-full transition-all duration-200 cursor-pointer shadow-2xs break-words"
                         title={`Szűrés erre a kategóriára: ${formData.category}`}
                       >
                         <span>{formData.category}</span>
                       </button>
                     )}
                   </div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-[#211E1B] tracking-tight">
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-extrabold text-[#211E1B] tracking-tight break-words">
                     {formData.name}
                   </h1>
                 </div>
 
-                {/* Össz darabszám a címsor jobb oldalán */}
-                <div className="shrink-0 flex flex-col items-end text-right pl-2 sm:pl-4">
-                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500 mb-1">
-                    Össz darabszám
-                  </span>
-                  <div
-                    className={`font-mono font-black text-xl sm:text-2xl md:text-3xl px-3.5 py-1 sm:px-4 sm:py-1.5 rounded-2xl border shadow-xs inline-flex items-center gap-1.5 ${
-                      productTotalStock > 0
-                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                        : 'bg-red-50 text-red-700 border-red-300'
-                    }`}
-                    title={`Összes raktári darabszám: ${productTotalStock} db`}
-                  >
-                    <span>{productTotalStock}</span>
-                    <span className="text-xs sm:text-sm font-bold opacity-80">db</span>
+                {/* Össz darabszám a címsor jobb oldalán (mobilon elegánsan alatta) */}
+                <div className="shrink-0 flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 text-left sm:text-right pt-2.5 sm:pt-0 border-t sm:border-t-0 border-[#DBD8D5]/60 sm:pl-4">
+                  <div className="flex flex-col items-start sm:items-end">
+                    <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500 mb-0.5 sm:mb-1">
+                      Össz darabszám
+                    </span>
+                    <div
+                      className={`font-mono font-black text-lg sm:text-2xl md:text-3xl px-3 py-0.5 sm:px-4 sm:py-1.5 rounded-xl sm:rounded-2xl border shadow-xs inline-flex items-center gap-1.5 ${
+                        productTotalStock > 0
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : 'bg-red-50 text-red-700 border-red-300'
+                      }`}
+                      title={`Összes raktári darabszám: ${productTotalStock} db`}
+                    >
+                      <span>{productTotalStock}</span>
+                      <span className="text-xs sm:text-sm font-bold opacity-80">db</span>
+                    </div>
                   </div>
-                  {activeWarehousePositions.length === 1 ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onNavigateToWarehousePosition &&
-                        onNavigateToWarehousePosition(activeWarehousePositions[0].positionId)
-                      }
-                      className="text-[11px] sm:text-xs text-slate-700 font-extrabold mt-1 inline-flex items-center gap-1 hover:text-blue-700 hover:underline transition-colors cursor-pointer"
-                      title={`Ugrás a(z) ${activeWarehousePositions[0].positionId} raktári pozícióhoz`}
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                      <span>{activeWarehousePositions[0].positionId} pozícióban</span>
-                    </button>
-                  ) : activeWarehousePositions.length > 1 ? (
-                    <span
-                      className="text-[11px] sm:text-xs text-slate-600 font-bold mt-1 inline-flex items-center gap-1"
-                      title={`Raktári pozíciók: ${activeWarehousePositions.map((p) => p.positionId).join(', ')}`}
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                      <span>{activeWarehousePositions.length} helyen szerepel</span>
-                    </span>
-                  ) : (
-                    <span
-                      className="text-[11px] sm:text-xs text-slate-400 font-bold mt-1 inline-flex items-center gap-1"
-                      title="Nincs rögzített raktári pozíció"
-                    >
-                      <MapPin className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                      <span>0 pozícióban</span>
-                    </span>
-                  )}
 
-                  {onNavigateToWarehouseMovement && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onNavigateToWarehouseMovement(
-                          formData.productId,
-                          activeWarehousePositions[0]?.positionId
-                        )
-                      }
-                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-900 border border-blue-200 text-xs font-black transition-colors cursor-pointer shadow-2xs group"
-                      title={`Készletmozgás rögzítése a(z) ${formData.productId} cikkszámhoz`}
-                    >
-                      <ArrowRightLeft className="w-3.5 h-3.5 text-blue-700 group-hover:text-white transition-colors" />
-                      <span>+ Készletmozgás</span>
-                    </button>
-                  )}
+                  <div className="flex flex-col items-end gap-1">
+                    {activeWarehousePositions.length === 1 ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onNavigateToWarehousePosition &&
+                          onNavigateToWarehousePosition(activeWarehousePositions[0].positionId)
+                        }
+                        className="text-[11px] sm:text-xs text-slate-700 font-extrabold mt-0.5 sm:mt-1 inline-flex items-center gap-1 hover:text-blue-700 hover:underline transition-colors cursor-pointer"
+                        title={`Ugrás a(z) ${activeWarehousePositions[0].positionId} raktári pozícióhoz`}
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span>{activeWarehousePositions[0].positionId} pozícióban</span>
+                      </button>
+                    ) : activeWarehousePositions.length > 1 ? (
+                      <span
+                        className="text-[11px] sm:text-xs text-slate-600 font-bold mt-0.5 sm:mt-1 inline-flex items-center gap-1"
+                        title={`Raktári pozíciók: ${activeWarehousePositions.map((p) => p.positionId).join(', ')}`}
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>{activeWarehousePositions.length} helyen szerepel</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[11px] sm:text-xs text-slate-400 font-bold mt-0.5 sm:mt-1 inline-flex items-center gap-1"
+                        title="Nincs rögzített raktári pozíció"
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                        <span>0 pozícióban</span>
+                      </span>
+                    )}
+
+                    {onNavigateToWarehouseMovement && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onNavigateToWarehouseMovement(
+                            formData.productId,
+                            activeWarehousePositions[0]?.positionId
+                          )
+                        }
+                        className="mt-1 sm:mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-900 border border-blue-200 text-xs font-black transition-colors cursor-pointer shadow-2xs group"
+                        title={`Készletmozgás rögzítése a(z) ${formData.productId} cikkszámhoz`}
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5 text-blue-700 group-hover:text-white transition-colors" />
+                        <span>+ Készletmozgás</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -2624,6 +2877,7 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                     <th className="py-2.5 px-3">Pozíció ID</th>
                     <th className="py-2.5 px-3 text-right">Mennyiség</th>
                     <th className="py-2.5 px-3">Megjegyzés</th>
+                    {canEdit && <th className="py-2.5 px-3 text-center w-12">Művelet</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-blue-100 font-medium text-slate-800">
@@ -2655,6 +2909,18 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                       <td className="py-2 px-3 text-slate-600 text-[11px]">
                         {tx.note || '—'}
                       </td>
+                      {canEdit && (
+                        <td className="py-2 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setTxToDelete(tx)}
+                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                            title="Készletmozgási tétel törlése"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -2662,6 +2928,74 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
             </div>
           </div>
         </section>
+      )}
+
+      {/* Modal: Készletmozgási tétel törlésének megerősítése */}
+      {txToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-red-200 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-red-100 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-slate-900">
+                  Készletmozgási Tétel Törlése
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Biztosan törölni szeretné ezt a készletmozgási tételt? A termék készlete azonnal újraszámolódik.
+                </p>
+
+                <div className="mt-4 p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Termék ID:</span>
+                    <span className="font-mono font-black text-slate-800">{txToDelete.productId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Pozíció:</span>
+                    <span className="font-mono font-black text-blue-700">{txToDelete.positionId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Mennyiség:</span>
+                    <span className={`font-mono font-black ${txToDelete.quantity > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {txToDelete.quantity > 0 ? `+${txToDelete.quantity}` : txToDelete.quantity} db
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Dátum:</span>
+                    <span className="text-slate-700 font-bold">{txToDelete.date || '—'}</span>
+                  </div>
+                  {txToDelete.note && (
+                    <div className="flex justify-between border-t border-slate-200 pt-1.5 mt-1.5">
+                      <span className="text-slate-500 font-medium">Megjegyzés:</span>
+                      <span className="text-slate-700 italic truncate max-w-[200px]">{txToDelete.note}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setTxToDelete(null)}
+                    disabled={isDeletingTx}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+                  >
+                    Mégse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteTx}
+                    disabled={isDeletingTx}
+                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs shadow-md cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isDeletingTx ? 'Törlés...' : 'Tétel Törlése'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Ha még nincs rögzített készletmozgás ehhez a termékhez */}
@@ -5332,6 +5666,315 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* 6. HASONLÓ TERMÉKEK SZEKCIÓ (Lila és árnyalatai)                         */}
+      {/* Bármely termék <-> Bármely termék kapcsolat                             */}
+      {/* Csak akkor jelenik meg a kártyája, ha van rögzített hasonló kapcsolat   */}
+      {/* ========================================================================= */}
+      {uniqueSimilarIds.length > 0 && (
+        <section className="bg-white rounded-2xl border-2 sm:border-3 border-purple-400 shadow-sm overflow-hidden space-y-0">
+          {/* Címsor: Lila és árnyalatai */}
+          <div className="bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-700 text-white p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3 border-b-2 border-purple-700/60">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center border border-white/20 shadow-xs shrink-0">
+                <Sparkles className="w-6 h-6 text-purple-100" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">
+                    Hasonló
+                  </h2>
+                  <span className="bg-white/20 text-white border border-white/30 px-3 py-0.5 rounded-full text-xs sm:text-sm font-extrabold whitespace-nowrap">
+                    {uniqueSimilarIds.length} db hasonló
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-purple-100/90 mt-0.5 font-medium">
+                  Hasonló, helyettesítő vagy kompatibilis termékek ({product.productId})
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Actions in Header */}
+            {canEdit && (
+              <div className="flex items-center gap-2">
+                {onNavigateToDataImport && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToDataImport('similars' as any)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs sm:text-sm font-bold transition-colors cursor-pointer border border-white/20"
+                    title="Hasonló kapcsolatok CSV feltöltése az Adatfeltöltés központban"
+                  >
+                    <UploadCloud className="w-4 h-4 text-purple-200" />
+                    <span className="hidden sm:inline">CSV Feltöltés</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewSimilarIdInput('');
+                    setNewSimilarNoteInput('');
+                    setShowAddSimilarModal(true);
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-purple-900 hover:bg-purple-50 text-xs sm:text-sm font-extrabold transition-colors cursor-pointer shadow-xs border border-purple-300"
+                >
+                  <Plus className="w-4 h-4 text-purple-700" />
+                  <span>+ Hasonló hozzáadása</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Action feedback message */}
+          {similarActionMessage && (
+            <div className="bg-purple-50 border-b border-purple-200 text-purple-950 px-4 py-2.5 text-sm font-bold flex items-center justify-between animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-purple-700" />
+                <span>{similarActionMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSimilarActionMessage(null)}
+                className="text-purple-800 hover:text-purple-950 font-bold ml-2 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Search filter if there are several connections */}
+          {uniqueSimilarIds.length > 3 && (
+            <div className="p-3 sm:p-4 bg-purple-50/40 border-b border-purple-100 flex items-center gap-2">
+              <Search className="w-4 h-4 text-purple-700 shrink-0" />
+              <input
+                type="text"
+                value={similarSearchTerm}
+                onChange={(e) => setSimilarSearchTerm(e.target.value)}
+                placeholder="Keresés a csatolt hasonló termékek között (cikkszám, gyári kód, kategória)..."
+                className="w-full text-xs sm:text-sm bg-white border border-purple-200 rounded-lg px-3 py-1.5 focus:outline-purple-600 font-medium text-purple-950"
+              />
+              {similarSearchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSimilarSearchTerm('')}
+                  className="text-xs text-gray-500 hover:text-gray-800 px-2 py-1 font-bold cursor-pointer"
+                >
+                  Törlés
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Body: Similar Product List */}
+          <div className="p-4 sm:p-6">
+            <div className="space-y-4">
+              {/* 1. Desktop Table View (Screens >= md) */}
+              <div className="hidden md:block overflow-x-auto border border-purple-200 rounded-xl shadow-2xs">
+                <table className="w-full text-left border-collapse table-fixed">
+                  <thead>
+                    <tr className="bg-purple-100/70 text-purple-950 text-xs font-bold uppercase tracking-wider select-none border-b-2 border-purple-200">
+                      <th className="py-3.5 px-3 w-20 text-center">Kép</th>
+                      <th className="py-3.5 px-4 w-auto min-w-[200px]">Cikkszám</th>
+                      <th className="py-3.5 px-4 w-44 sm:w-52">Gyári Kód</th>
+                      <th className="py-3.5 px-4 w-48 sm:w-56">Kategória</th>
+                      {canEdit && <th className="py-3.5 px-3 w-24 text-center">Művelet</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-purple-100 bg-white text-[#211E1B]">
+                    {filteredResolvedSimilarProducts.map(({ id: sId, product: sp, isRegistered }) => {
+                      const hasImage = sp.images && sp.images.length > 0;
+                      const thumb = hasImage ? sp.images[0] : null;
+
+                      return (
+                        <tr
+                          key={sId}
+                          className="hover:bg-purple-50/50 transition-colors group"
+                        >
+                          {/* 1. KÉP */}
+                          <td className="py-3.5 px-3 text-center align-middle">
+                            <div
+                              className="w-14 h-14 rounded-xl border border-purple-200 bg-[#F8F9FA] overflow-hidden flex items-center justify-center mx-auto cursor-pointer shadow-2xs hover:border-purple-400 transition-colors"
+                              onClick={() => onSelectProduct && onSelectProduct(sp)}
+                              title={
+                                isRegistered
+                                  ? `${sp.name || sp.productId} megtekintése`
+                                  : 'Nem regisztrált termék'
+                              }
+                            >
+                              {thumb ? (
+                                <img
+                                  src={thumb}
+                                  alt={sp.name || sp.productId}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src =
+                                      'https://placehold.co/100x100/9333EA/white?text=HAS';
+                                  }}
+                                />
+                              ) : (
+                                <Sparkles className="w-6 h-6 text-purple-400" />
+                              )}
+                            </div>
+                          </td>
+
+                          {/* 2. CIKKSZÁM */}
+                          <td className="py-3.5 px-4 align-middle">
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                  className="font-mono font-black text-base text-purple-900 group-hover:text-purple-700 hover:underline cursor-pointer"
+                                  onClick={() => onSelectProduct && onSelectProduct(sp)}
+                                  title="Kattintson az adatlap megnyitásához"
+                                >
+                                  {sp.productId}
+                                </span>
+                                {!isRegistered && (
+                                  <span
+                                    className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 rounded px-1.5 py-0.2 font-mono font-bold"
+                                    title="Ez a cikkszám kapcsolatként szerepel, de még nincs önálló törzslapja a raktárban"
+                                  >
+                                    új
+                                  </span>
+                                )}
+                              </div>
+                              {sp.name && (
+                                <div
+                                  className="text-xs text-stone-600 font-sans font-medium truncate max-w-[340px] cursor-pointer hover:text-purple-700"
+                                  onClick={() => onSelectProduct && onSelectProduct(sp)}
+                                  title={sp.name}
+                                >
+                                  {sp.name}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* 3. GYÁRI KÓD */}
+                          <td className="py-3.5 px-4 align-middle font-mono text-sm">
+                            {sp.factoryCode ? (
+                              <span className="bg-stone-100 border border-stone-300 text-stone-900 px-2.5 py-1 rounded-md font-bold inline-block">
+                                {sp.factoryCode}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic">—</span>
+                            )}
+                          </td>
+
+                          {/* 4. KATEGÓRIA */}
+                          <td className="py-3.5 px-4 align-middle text-xs font-bold">
+                            {sp.category ? (
+                              <span className="bg-purple-100/80 text-purple-900 border border-purple-300 px-3 py-1 rounded-full inline-block font-extrabold shadow-2xs">
+                                {sp.category}
+                              </span>
+                            ) : (
+                              <span className="text-stone-400 italic text-sm font-normal">—</span>
+                            )}
+                          </td>
+
+                          {/* 5. MŰVELET */}
+                          {canEdit && (
+                            <td className="py-3.5 px-3 text-center align-middle">
+                              <button
+                                type="button"
+                                onClick={() => setSimilarToDelete({ id: sId, name: sp.name || sId })}
+                                className="p-2 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-red-200 inline-flex items-center justify-center"
+                                title={`Hasonló kapcsolat (${sId}) törlése`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 2. Mobile Card View (Screens < md) */}
+              <div className="md:hidden divide-y divide-purple-100 border border-purple-200 rounded-xl overflow-hidden bg-white">
+                {filteredResolvedSimilarProducts.map(({ id: sId, product: sp }) => {
+                  const hasImage = sp.images && sp.images.length > 0;
+                  const thumb = hasImage ? sp.images[0] : null;
+
+                  return (
+                    <div
+                      key={sId}
+                      className="p-3.5 hover:bg-purple-50/50 active:bg-purple-100/40 cursor-pointer flex gap-3.5 items-center transition-colors"
+                      onClick={() => onSelectProduct && onSelectProduct(sp)}
+                      title={`${sp.name || sp.productId} adatlapjának megnyitása`}
+                    >
+                      {/* 1. KÉP */}
+                      <div className="w-16 h-16 rounded-xl border border-purple-200 bg-[#F8F9FA] overflow-hidden flex items-center justify-center shrink-0 shadow-2xs">
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt={sp.name || sp.productId}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                'https://placehold.co/100x100/9333EA/white?text=HAS';
+                            }}
+                          />
+                        ) : (
+                          <Sparkles className="w-6 h-6 text-purple-400" />
+                        )}
+                      </div>
+
+                      {/* 2. CIKKSZÁM, 3. GYÁRI KÓD, 4. KATEGÓRIA */}
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-black text-sm text-purple-950">
+                            {sp.productId}
+                          </span>
+                        </div>
+
+                        {sp.name && (
+                          <div className="text-xs text-stone-600 truncate font-medium">
+                            {sp.name}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs pt-0.5">
+                          {sp.factoryCode ? (
+                            <span className="font-mono text-[11px] bg-stone-100 border border-stone-200 px-1.5 py-0.5 rounded text-stone-800 font-bold">
+                              Kód: {sp.factoryCode}
+                            </span>
+                          ) : null}
+
+                          {sp.category ? (
+                            <span className="bg-purple-100 text-purple-900 border border-purple-200 px-2 py-0.5 rounded-full font-bold text-[11px]">
+                              {sp.category}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* 5. MŰVELET */}
+                      {canEdit && (
+                        <div className="shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSimilarToDelete({ id: sId, name: sp.name || sId });
+                            }}
+                            className="p-2 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-red-200"
+                            title={`Hasonló kapcsolat (${sId}) törlése`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ========================================================================= */}
       {/* 6. SARUMAGASSÁG TÁBLÁZAT KÁRTYA (pont mint az eddigi kártyák)            */}
       {/* ========================================================================= */}
       {crimpRecords.length > 0 && (
@@ -6700,6 +7343,271 @@ export const ProductDetail: React.FC<ProductDetailProps> = ({
                   </span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: HASONLÓ TERMÉK KAPCSOLAT HOZZÁADÁSA (Lila téma)                     */}
+      {/* ========================================================================= */}
+      {showAddSimilarModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-purple-400">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-purple-600 via-purple-700 to-indigo-700 text-white p-5 flex items-center justify-between border-b border-purple-600">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center border border-white/20">
+                  <Sparkles className="w-5 h-5 text-purple-200" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">Hasonló kapcsolat hozzáadása</h3>
+                  <p className="text-xs text-purple-200 font-medium">
+                    Aktuális termék: {product.productId} ({product.name || 'Termék'})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddSimilarModal(false)}
+                className="p-1.5 rounded-lg hover:bg-white/15 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-gray-700 block">
+                  Hasonló / Helyettesítő Termék ID vagy Keresés:
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={newSimilarIdInput}
+                    onChange={(e) => setNewSimilarIdInput(e.target.value)}
+                    placeholder="Pl. 2122120061 vagy név, gyári kód..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-600 font-mono text-sm uppercase bg-white text-gray-900"
+                    autoFocus
+                  />
+                  {newSimilarIdInput && (
+                    <button
+                      type="button"
+                      onClick={() => setNewSimilarIdInput('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {isSelectedSimilarAlreadyAttached && (
+                  <p className="text-xs font-bold text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    Ez a termék már rögzítve van a hasonló termékek listájában!
+                  </p>
+                )}
+
+                {exactMatchedSimilar && (
+                  <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-xl text-xs space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-purple-900">Megtalált termék:</span>
+                      <span className="font-mono font-black text-purple-950">{exactMatchedSimilar.productId}</span>
+                      <span className="text-gray-600 truncate">— {exactMatchedSimilar.name}</span>
+                    </div>
+                    <div className="text-[11px] text-gray-600 flex items-center gap-3">
+                      <span>Kategória: <strong>{exactMatchedSimilar.category || 'Nincs'}</strong></span>
+                      <span>Készlet: <strong className={exactMatchedSimilar.stockQuantity && exactMatchedSimilar.stockQuantity > 0 ? 'text-emerald-700' : 'text-gray-500'}>{exactMatchedSimilar.stockQuantity ?? 0} db</strong></span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Megjegyzés mező */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-bold text-gray-700 block">
+                  Megjegyzés (Opcionális):
+                </label>
+                <input
+                  type="text"
+                  value={newSimilarNoteInput}
+                  onChange={(e) => setNewSimilarNoteInput(e.target.value)}
+                  placeholder="Pl. Helyettesítő típus, kompatibilis méret..."
+                  className="w-full px-3.5 py-2 rounded-xl border border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-600 text-xs bg-white text-gray-900"
+                />
+              </div>
+
+              {/* Javaslatok lista */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs font-bold text-purple-950">
+                  <span>
+                    {newSimilarIdInput.trim()
+                      ? `Keresési találatok (${searchSimilarSuggestions.length} db):`
+                      : 'Hasonló termék választása:'}
+                  </span>
+                  {newSimilarIdInput.trim() && (
+                    <span className="text-[11px] text-purple-700">Kattintson a kiválasztáshoz</span>
+                  )}
+                </div>
+
+                {searchSimilarSuggestions.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto border border-purple-200 rounded-xl divide-y divide-purple-100 bg-[#FCFDFD]">
+                    {searchSimilarSuggestions.map((p) => {
+                      const isAttached = uniqueSimilarIds.some((id) => id.trim().toLowerCase() === p.productId.trim().toLowerCase());
+                      const isSelected = newSimilarIdInput.trim().toLowerCase() === p.productId.trim().toLowerCase();
+                      const thumb = p.images && p.images.length > 0 ? p.images[0] : null;
+
+                      return (
+                        <div
+                          key={p.productId}
+                          onClick={() => {
+                            if (!isAttached) {
+                              setNewSimilarIdInput(p.productId);
+                            }
+                          }}
+                          className={`p-2.5 flex items-center justify-between gap-2.5 text-xs transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-purple-100 font-bold border-l-4 border-purple-600 shadow-2xs'
+                              : isAttached
+                              ? 'bg-gray-50 opacity-60 cursor-not-allowed'
+                              : 'hover:bg-purple-50/70'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <div className="w-9 h-9 rounded-lg border border-purple-200 bg-white overflow-hidden flex items-center justify-center shrink-0">
+                              {thumb ? (
+                                <img src={thumb} alt={p.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <Sparkles className="w-4 h-4 text-purple-400" />
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono font-black text-purple-950 text-xs sm:text-sm">
+                                  {p.productId}
+                                </span>
+                                {p.factoryCode && (
+                                  <span className="font-mono text-[10px] bg-white border border-purple-200 px-1 py-0.2 rounded text-purple-900">
+                                    {p.factoryCode}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-gray-700 truncate font-medium text-xs">
+                                {p.name}
+                              </div>
+                              <div className="text-[11px] text-gray-500 flex items-center gap-2">
+                                <span>{p.category || 'Termék'}</span>
+                                <span>•</span>
+                                <span className={p.stockQuantity && p.stockQuantity > 0 ? 'text-emerald-700 font-bold' : 'text-gray-400'}>
+                                  Készlet: {p.stockQuantity ?? 0} db
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0">
+                            {isSelected ? (
+                              <span className="bg-purple-600 text-white font-extrabold px-2.5 py-1 rounded-lg text-xs flex items-center gap-1 shadow-2xs">
+                                <Check className="w-3 h-3" />
+                                Kiválasztva
+                              </span>
+                            ) : isAttached ? (
+                              <span className="bg-gray-200 text-gray-600 font-bold px-2 py-0.5 rounded text-[11px]">
+                                Csatolva
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNewSimilarIdInput(p.productId);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-200 text-purple-900 font-bold text-xs border border-purple-300 transition-colors cursor-pointer"
+                              >
+                                Kiválaszt
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : newSimilarIdInput.trim() ? (
+                  <div className="p-3 bg-purple-50/70 border border-purple-200 rounded-xl text-purple-950 text-xs">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                      Nincs pontos egyezés a raktári adatbázisban.
+                    </p>
+                    <p className="text-purple-800 text-[11px] mt-1">
+                      A kapcsolat így is létrehozható ezzel az azonosítóval ({newSimilarIdInput.trim()}).
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-200">
+                <button
+                  type="button"
+                  onClick={() => setShowAddSimilarModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-gray-200 hover:bg-gray-300 font-bold text-gray-800 text-sm transition-colors cursor-pointer"
+                >
+                  Mégse
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddSimilar}
+                  disabled={!newSimilarIdInput.trim() || isSelectedSimilarAlreadyAttached || isAddingSimilar}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:bg-gray-400 font-bold text-white text-sm transition-colors cursor-pointer shadow-xs inline-flex items-center gap-1.5 border border-purple-600"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>
+                    {isAddingSimilar ? 'Rögzítés...' : '+ Hasonló Rögzítése'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: HASONLÓ TÖRLÉSÉNEK MEGERŐSÍTÉSE */}
+      {similarToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-purple-300 space-y-4">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Hasonló kapcsolat törlése</h3>
+                <p className="text-xs text-gray-500">Biztosan törölni szeretné a kapcsolatot?</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 text-xs space-y-1">
+              <div>Kapcsolat: <span className="font-mono font-bold text-purple-950">{product.productId}</span> ↔ <span className="font-mono font-bold text-purple-950">{similarToDelete.id}</span></div>
+              <div className="text-gray-600">{similarToDelete.name}</div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSimilarToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-gray-200 hover:bg-gray-300 font-bold text-gray-800 text-xs transition-colors cursor-pointer"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteSimilar}
+                disabled={isDeletingSimilar}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs transition-colors cursor-pointer"
+              >
+                {isDeletingSimilar ? 'Törlés...' : 'Igen, Törlés'}
+              </button>
             </div>
           </div>
         </div>

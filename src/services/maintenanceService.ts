@@ -22,9 +22,9 @@ export function getLocalStoredMaintenances(): MaintenanceRecord[] {
   }
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed;
       }
     }
@@ -114,10 +114,18 @@ export function subscribeToMaintenances(
           saveLocalMaintenances(list);
           onUpdate(list);
         } else {
-          // If Firestore is empty, seed initial or fallback to local
-          const local = getLocalStoredMaintenances();
-          onUpdate(local);
-          seedInitialMaintenancesIfEmpty().catch(() => {});
+          // If Firestore is empty, check if user has previously used the app
+          const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_KEY) : null;
+          if (raw !== null) {
+            // Local storage has explicit state (including empty list), do NOT re-seed
+            const local = getLocalStoredMaintenances();
+            onUpdate(local);
+          } else {
+            // Very first time initialization
+            const local = getLocalStoredMaintenances();
+            onUpdate(local);
+            seedInitialMaintenancesIfEmpty().catch(() => {});
+          }
         }
       },
       (error) => {
@@ -170,13 +178,22 @@ export async function saveMaintenanceRecord(record: Partial<MaintenanceRecord> &
 }
 
 export async function deleteMaintenanceRecord(recordId: string): Promise<void> {
+  const rawId = (recordId || '').trim();
+  const cleanId = sanitizeDocId(rawId);
   const current = getLocalStoredMaintenances();
-  const updated = current.filter((m) => m.id !== recordId);
+  const updated = current.filter(
+    (m) => m.id !== rawId && m.id !== cleanId && m.id.trim() !== rawId
+  );
   saveLocalMaintenances(updated);
 
   try {
-    const docRef = doc(db, MAINTENANCES_COLLECTION, recordId);
+    const docRef = doc(db, MAINTENANCES_COLLECTION, rawId);
     await deleteDoc(docRef);
+    if (cleanId !== rawId && cleanId) {
+      try {
+        await deleteDoc(doc(db, MAINTENANCES_COLLECTION, cleanId));
+      } catch (_) {}
+    }
   } catch (err) {
     console.warn('Could not delete maintenance from Firestore (deleted locally):', err);
   }

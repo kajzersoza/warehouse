@@ -272,6 +272,38 @@
       },
       "required": ["productId1", "productId2"]
     },
+    "ProductSimilarRelation": {
+      "title": "ProductSimilarRelation",
+      "description": "Bármely termék összekapcsolása hasonló / helyettesítő termékként (lila kapcsolat)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Kapcsolat egyedi azonosítója (p1__p2)",
+          "maxLength": 200
+        },
+        "productId1": {
+          "type": "string",
+          "description": "Első termék azonosítója",
+          "maxLength": 100
+        },
+        "productId2": {
+          "type": "string",
+          "description": "Második (hasonló) termék azonosítója",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "description": "Opcionális megjegyzés",
+          "maxLength": 500
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Módosítás időpontja (ISO string)"
+        }
+      },
+      "required": ["productId1", "productId2"]
+    },
     "UserProfile": {
       "title": "UserProfile",
       "description": "Felhasználói profil és jogosultsági szerepkör (admin, editor, viewer)",
@@ -429,6 +461,10 @@
     "/product_terminal_fejek/{relationId}": {
       "schema": "ProductTerminalFejRelation",
       "description": "Saru és Saruzófej kapcsolatok gyűjteménye (kétirányú)"
+    },
+    "/product_similars/{relationId}": {
+      "schema": "ProductSimilarRelation",
+      "description": "Bármely termék hasonló / helyettesítő kapcsolatok gyűjteménye (lila)"
     },
     "/product_notes/{noteId}": {
       "schema": "ProductNote",

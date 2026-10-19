@@ -38,7 +38,7 @@ export const CrimpHeightTableCard: React.FC<CrimpHeightTableCardProps> = ({
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden mt-6">
+    <div className="w-full max-w-full min-w-0 bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden mt-6">
       {/* Kártya fejléc - illeszkedik a többi kártya stílusához */}
       <div className="bg-gradient-to-r from-slate-100 via-sky-50 to-blue-50 px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">

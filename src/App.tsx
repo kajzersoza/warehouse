@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Menu,
   ArrowLeft,
@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth, loginWithGoogle, logoutUser, testConnection } from './firebase';
-import { Product, ProductComponentRelation, ProductMeterBoxRelation, ProductConnectorTerminalRelation, ProductMatingPairRelation, ProductTerminalFejRelation, ProductTerminalFejDisconnection, ProductNote, ViewMode, UserProfile, UserRole, WarehousePosition, WarehouseTransaction } from './types/product';
+import { Product, ProductComponentRelation, ProductMeterBoxRelation, ProductConnectorTerminalRelation, ProductMatingPairRelation, ProductSimilarRelation, ProductTerminalFejRelation, ProductTerminalFejDisconnection, ProductNote, ViewMode, UserProfile, UserRole, WarehousePosition, WarehouseTransaction } from './types/product';
 import {
   subscribeToProducts,
   saveProductToFirestore,
@@ -64,6 +64,13 @@ import {
   buildMatingPairRelationDocId
 } from './services/matingPairService';
 import {
+  getLocalStoredSimilars,
+  subscribeToSimilarProducts,
+  saveSimilarRelation,
+  deleteSimilarRelation,
+  buildSimilarRelationDocId
+} from './services/similarProductService';
+import {
   getLocalStoredNotes,
   subscribeToNotes,
   seedInitialNotesIfEmpty,
@@ -102,6 +109,7 @@ import {
   subscribeToWarehousePositions,
   getLocalStoredWarehouseTransactions,
   subscribeToWarehouseTransactions,
+  deleteWarehouseTransaction,
   resetAllWarehouseStockToZero
 } from './services/warehouseService';
 import { exportProductsToCsv } from './utils/csvHelper';
@@ -125,6 +133,16 @@ import {
 } from './services/kanbanService';
 import { KanbanBoardView } from './components/KanbanBoardView';
 import { KanbanItemModal } from './components/KanbanItemModal';
+import { MeterBoxFinderView } from './components/MeterBoxFinderView';
+import {
+  getPinnedProductIds,
+  togglePinnedProductId,
+  removePinnedProductId,
+  clearAllPinnedProductIds,
+  isProductPinned
+} from './services/pinnedProductsService';
+import { PinnedProductsTray } from './components/PinnedProductsTray';
+import { ProductQuickModal } from './components/ProductQuickModal';
 
 export interface NavigationStep {
   view: ViewMode;
@@ -144,6 +162,9 @@ export default function App() {
   );
   const [matingPairRelations, setMatingPairRelations] = useState<ProductMatingPairRelation[]>(
     getLocalStoredMatingPairs()
+  );
+  const [similarRelations, setSimilarRelations] = useState<ProductSimilarRelation[]>(
+    getLocalStoredSimilars()
   );
   const [productNotes, setProductNotes] = useState<ProductNote[]>(
     getLocalStoredNotes()
@@ -201,6 +222,33 @@ export default function App() {
   const [isKanbanModalOpen, setIsKanbanModalOpen] = useState(false);
   const [kanbanModalProductId, setKanbanModalProductId] = useState<string | undefined>(undefined);
   const [editingKanbanItem, setEditingKanbanItem] = useState<KanbanItem | null>(null);
+
+  // Pinned products quick-access tray state (jobb felső gyorssáv & felugró ablak)
+  const [pinnedProductIds, setPinnedProductIds] = useState<string[]>(() => getPinnedProductIds());
+  const [modalQuickProduct, setModalQuickProduct] = useState<Product | null>(null);
+
+  const handleTogglePin = useCallback((productId: string) => {
+    const res = togglePinnedProductId(productId);
+    setPinnedProductIds(res.ids);
+  }, []);
+
+  const handleRemovePin = useCallback((productId: string) => {
+    const next = removePinnedProductId(productId);
+    setPinnedProductIds(next);
+  }, []);
+
+  const handleClearAllPins = useCallback(() => {
+    clearAllPinnedProductIds();
+    setPinnedProductIds([]);
+  }, []);
+
+  const handleOpenPinnedProductModal = useCallback((product: Product) => {
+    setModalQuickProduct(product);
+  }, []);
+
+  const handleClosePinnedProductModal = useCallback(() => {
+    setModalQuickProduct(null);
+  }, []);
 
   const totalWarehouseUnits = warehouseTransactions.reduce(
     (acc, tx) =>
@@ -317,6 +365,16 @@ export default function App() {
       }
     );
 
+    // 8b. Hasonló termékek real-time listener (Bármely termék <-> Bármely termék, Lila)
+    const unsubSimilars = subscribeToSimilarProducts(
+      (updatedSimilars) => {
+        setSimilarRelations(updatedSimilars);
+      },
+      (error) => {
+        console.warn('Realtime similars sync warning:', error);
+      }
+    );
+
     // 9. Notesz (Product Notes) real-time listener (#FA4646)
     const unsubNotes = subscribeToNotes(
       (updatedNotes) => {
@@ -394,6 +452,7 @@ export default function App() {
       unsubMeterBoxes();
       unsubConnectorTerminals();
       unsubMatingPairs();
+      unsubSimilars();
       unsubNotes();
       unsubTerminalFejek();
       unsubTerminalFejDiscs();
@@ -436,6 +495,11 @@ export default function App() {
       setSelectedWarehousePositionId(positionId);
     }
     navigateTo('warehouse-stats');
+  };
+
+  const handleDeleteWarehouseTransaction = async (txId: string) => {
+    await deleteWarehouseTransaction(txId);
+    setWarehouseTransactions(getLocalStoredWarehouseTransactions());
   };
 
   const handleOpenDataImport = (
@@ -590,6 +654,31 @@ export default function App() {
     });
   };
 
+  const handleAddSimilarRelation = async (productId1: string, productId2: string, note?: string) => {
+    const savedList = await saveSimilarRelation(productId1, productId2, true, note);
+    setSimilarRelations((prev) => {
+      const copy = [...prev];
+      savedList.forEach((saved) => {
+        const idx = copy.findIndex((r) => r.id === saved.id);
+        if (idx >= 0) {
+          copy[idx] = saved;
+        } else {
+          copy.push(saved);
+        }
+      });
+      return copy;
+    });
+  };
+
+  const handleDeleteSimilarRelation = async (productId1: string, productId2: string) => {
+    await deleteSimilarRelation(productId1, productId2, true);
+    setSimilarRelations((prev) => {
+      const id1 = buildSimilarRelationDocId(productId1, productId2);
+      const id2 = buildSimilarRelationDocId(productId2, productId1);
+      return prev.filter((r) => r.id !== id1 && r.id !== id2);
+    });
+  };
+
   const handleSaveProductNote = async (note: ProductNote) => {
     await saveNote(note);
   };
@@ -603,8 +692,15 @@ export default function App() {
   };
 
   const handleDeleteMaintenance = async (recordId: string) => {
-    await deleteMaintenanceRecord(recordId);
-    setMaintenances((prev) => prev.filter((m) => m.id !== recordId));
+    const rawId = (recordId || '').trim();
+    setMaintenances((prev) => prev.filter((m) => m.id !== recordId && m.id !== rawId));
+    try {
+      await deleteMaintenanceRecord(recordId);
+    } catch (err) {
+      console.error('Failed to delete maintenance:', err);
+    } finally {
+      setMaintenances(getLocalStoredMaintenances());
+    }
   };
 
   const handleDeleteAllMaintenances = async () => {
@@ -660,8 +756,15 @@ export default function App() {
   };
 
   const handleDeleteKanbanItem = async (id: string) => {
-    await deleteKanbanItem(id);
-    setKanbanItems(getLocalStoredKanbanItems());
+    const rawId = (id || '').trim();
+    setKanbanItems((prev) => prev.filter((k) => k.id !== id && k.id !== rawId));
+    try {
+      await deleteKanbanItem(id);
+    } catch (err) {
+      console.error('Failed to delete kanban item:', err);
+    } finally {
+      setKanbanItems(getLocalStoredKanbanItems());
+    }
   };
 
   const handleMoveKanbanItemStatus = async (id: string, newStatus: KanbanStatus) => {
@@ -730,39 +833,60 @@ export default function App() {
     <div className="min-h-screen bg-[#F8F9FA] text-[#211E1B] flex flex-col font-sans">
       {/* Top Main Navigation Header */}
       <header className="sticky top-0 z-40 bg-white border-b-2 border-[#DBD8D5] shadow-xs">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-20 flex items-center justify-between gap-2 sm:gap-3">
+        <div className="max-w-7xl mx-auto px-2 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-1.5 sm:gap-3 min-w-0">
           {/* Left section: Menu Button + Universal Back Button */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={() => setIsMenuOpen(true)}
-              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-[#3A5D6B] hover:bg-[#2F223A] text-white font-bold text-sm sm:text-base transition-colors cursor-pointer shadow-xs"
-              title="Rendszermenü megnyitása"
-            >
-              <Menu className="w-5 h-5 sm:w-6 sm:h-6 text-[#79B6B8]" />
-              <span className="hidden sm:inline">Menü</span>
-            </button>
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsMenuOpen(true)}
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-[#3A5D6B] hover:bg-[#2F223A] text-white font-bold text-xs sm:text-base transition-colors cursor-pointer shadow-xs"
+                title="Rendszermenü megnyitása"
+              >
+                <Menu className="w-5 h-5 sm:w-6 sm:h-6 text-[#79B6B8]" />
+                <span className="hidden sm:inline">Menü</span>
+              </button>
+
+              {/* Pinned Products Floating Tray - közvetlenül a Menü gomb alatt, minden felett lebegve */}
+              {pinnedProductIds.length > 0 && (
+                <div className="absolute top-full left-0 mt-2 z-40 w-max max-w-[calc(100vw-24px)] sm:max-w-md lg:max-w-xl animate-fadeIn">
+                  <PinnedProductsTray
+                    pinnedProductIds={pinnedProductIds}
+                    products={products}
+                    onSelectProduct={handleOpenPinnedProductModal}
+                    onRemovePin={handleRemovePin}
+                    onClearAll={handleClearAllPins}
+                    variant="floating"
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Mobile-only compact back button when not on main list */}
             {currentView !== 'list' && (
               <button
                 type="button"
                 onClick={handleGoBack}
-                className="flex md:hidden items-center justify-center p-2.5 rounded-xl bg-[#DBD8D5]/70 hover:bg-[#DBD8D5] text-[#211E1B] transition-colors cursor-pointer border border-[#DBD8D5]"
+                className="flex md:hidden items-center justify-center p-2 rounded-xl bg-[#DBD8D5]/70 hover:bg-[#DBD8D5] text-[#211E1B] transition-colors cursor-pointer border border-[#DBD8D5] shrink-0"
                 title="Vissza az előző oldalra"
               >
-                <ArrowLeft className="w-5 h-5 text-[#3A5D6B]" />
+                <ArrowLeft className="w-4 h-4 text-[#3A5D6B]" />
               </button>
             )}
 
-            {/* App Brand Logo & Name: World Wires kft. - always visible and never cut off */}
+            {/* App Brand Logo & Name: World Wires kft. - mobilon csak a kisméretű logó jelenik meg */}
             <div
               onClick={handleGoToList}
-              className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group ml-1 shrink-0"
+              className="flex items-center gap-2 sm:gap-2.5 cursor-pointer group shrink-0"
               title="Vissza a terméklistához"
             >
-              <CompanyLogo size="md" />
-              <span className="font-extrabold text-base sm:text-2xl text-[#211E1B] tracking-tight whitespace-nowrap block leading-tight">
+              <div className="sm:hidden">
+                <CompanyLogo size="sm" />
+              </div>
+              <div className="hidden sm:block">
+                <CompanyLogo size="md" />
+              </div>
+              <span className="hidden sm:block font-extrabold text-base sm:text-2xl text-[#211E1B] tracking-tight whitespace-nowrap leading-tight">
                 World Wires kft.
               </span>
             </div>
@@ -806,11 +930,11 @@ export default function App() {
 
           {/* Right Section: Quick Actions, Firebase Status, Auth */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Főoldali Kanban Gomb (Mindig elérhető) */}
+            {/* Főoldali Kanban Gomb (Mindig elérhető) - mobilon csak az ikon látható */}
             <button
               type="button"
               onClick={() => navigateTo('kanban')}
-              className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all cursor-pointer shadow-xs ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl font-black text-xs sm:text-sm transition-all cursor-pointer shadow-xs ${
                 currentView === 'kanban'
                   ? 'bg-[#2F223A] text-white ring-2 ring-[#79B6B8]'
                   : 'bg-white hover:bg-purple-50 text-purple-950 border-2 border-purple-300 hover:border-purple-500'
@@ -818,26 +942,13 @@ export default function App() {
               title="Kanban Tábla megnyitása (Új, Folyamatban, Befejezve)"
             >
               <Layers className="w-4 h-4 text-purple-600 shrink-0" />
-              <span>Kanban</span>
+              <span className="hidden sm:inline">Kanban</span>
               {kanbanItems.length > 0 && (
                 <span className="font-mono text-[10px] sm:text-xs font-black px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-900 border border-purple-200">
                   {kanbanItems.length}
                 </span>
               )}
             </button>
-
-            {/* Quick Data Import button in header (visible to editors & admins) */}
-            {isEditor && (
-              <button
-                type="button"
-                onClick={() => handleOpenDataImport('products')}
-                className="hidden lg:flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-[#DBD8D5] hover:border-[#3A5D6B] bg-[#F8F9FA] hover:bg-white text-[#211E1B] font-bold text-sm transition-colors cursor-pointer shadow-2xs"
-                title="Adatfeltöltés (Termék CSV & Beépülő alkatrész CSV)"
-              >
-                <UploadCloud className="w-4 h-4 text-[#3A5D6B]" />
-                <span>Adatfeltöltés</span>
-              </button>
-            )}
 
             {/* Quick New Product button in header (visible to editors & admins) */}
             {isEditor && (
@@ -851,19 +962,27 @@ export default function App() {
               </button>
             )}
 
-            {/* Firebase Status Badge */}
+            {/* Firebase Status: Csak egy kis felhő ikon */}
             <div
-              className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${
+              className={`flex items-center justify-center p-2 rounded-xl border transition-colors shadow-2xs ${
                 isFirebaseOnline
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                  : 'bg-amber-50 text-amber-600 border-amber-200'
               }`}
-              title="Firebase adatbázis kapcsolat állapota"
+              title={
+                isFirebaseOnline
+                  ? 'Firebase Felhő kapcsolat: Online'
+                  : 'Firebase adatbázis kapcsolat: Offline (Helyi üzemmód)'
+              }
             >
-              <span className={`w-2 h-2 rounded-full ${isFirebaseOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-              <span>
-                {isFirebaseOnline ? 'Firebase Felhő' : 'Helyi üzemmód'}
-              </span>
+              {isFirebaseOnline ? (
+                <div className="relative flex items-center justify-center">
+                  <CloudCheck className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" />
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+              ) : (
+                <CloudOff className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+              )}
             </div>
 
             {/* User Profile & Role / Login Button */}
@@ -905,7 +1024,7 @@ export default function App() {
       </header>
 
       {/* Main View Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-2.5 py-4 sm:p-6 lg:p-8 min-w-0 overflow-x-clip">
         <div className={currentView === 'list' ? 'block' : 'hidden'}>
           <ProductListView
             products={products}
@@ -919,6 +1038,11 @@ export default function App() {
             initialFilter={activeListFilter}
             onClearFilter={() => setActiveListFilter(null)}
             onNavigateToWarehousePosition={handleNavigateToWarehousePosition}
+            pinnedProductIds={pinnedProductIds}
+            onTogglePin={handleTogglePin}
+            onRemovePin={handleRemovePin}
+            onClearAllPins={handleClearAllPins}
+            onSelectPinnedProduct={handleOpenPinnedProductModal}
           />
         </div>
 
@@ -939,6 +1063,7 @@ export default function App() {
             onNavigateToKanban={() => navigateTo('kanban')}
             onNavigateToWarehousePosition={handleNavigateToWarehousePosition}
             onNavigateToWarehouseMovement={handleNavigateToWarehouseMovement}
+            onDeleteWarehouseTransaction={handleDeleteWarehouseTransaction}
             onBack={handleGoBack}
             onGoToList={handleGoToList}
             previousProduct={previousStep?.product || null}
@@ -955,6 +1080,9 @@ export default function App() {
             onDeleteConnectorTerminalRelation={handleDeleteConnectorTerminalRelation}
             onAddMatingPairRelation={handleAddMatingPairRelation}
             onDeleteMatingPairRelation={handleDeleteMatingPairRelation}
+            similarRelations={similarRelations}
+            onAddSimilarRelation={handleAddSimilarRelation}
+            onDeleteSimilarRelation={handleDeleteSimilarRelation}
             onAddTerminalFejRelation={handleAddTerminalFejRelation}
             onDeleteTerminalFejRelation={handleDeleteTerminalFejRelation}
             productNotes={productNotes}
@@ -965,6 +1093,8 @@ export default function App() {
             onDeleteMaintenance={handleDeleteMaintenance}
             onDeleteAllMaintenanceForProduct={handleDeleteAllMaintenanceForProduct}
             canEdit={isEditor}
+            isPinned={isProductPinned(selectedProduct.productId, pinnedProductIds)}
+            onTogglePin={handleTogglePin}
           />
         )}
 
@@ -1031,6 +1161,18 @@ export default function App() {
             onMoveStatus={handleMoveKanbanItemStatus}
             onSelectProduct={(p) => navigateTo('detail', p)}
             onGoBack={handleGoBack}
+          />
+        )}
+
+        {currentView === 'meterbox-finder' && (
+          <MeterBoxFinderView
+            products={products}
+            componentRelations={componentRelations}
+            matingPairRelations={matingPairRelations}
+            onBack={handleGoBack}
+            onGoToList={handleGoToList}
+            onSelectProduct={(p) => navigateTo('detail', p)}
+            initialProductId={selectedProduct?.productId}
           />
         )}
       </main>
@@ -1293,6 +1435,57 @@ export default function App() {
           products={products}
           onSave={handleSaveKanbanItem}
           onDelete={handleDeleteKanbanItem}
+        />
+      )}
+
+      {/* Pinned Product Quick Detail Popup Modal (felugró ablak a kitűzött termékhez) */}
+      {modalQuickProduct && (
+        <ProductQuickModal
+          product={modalQuickProduct}
+          onClose={handleClosePinnedProductModal}
+          onOpenFullDetail={(p) => {
+            handleClosePinnedProductModal();
+            navigateTo('detail', p);
+          }}
+          allProducts={products}
+          componentRelations={componentRelations}
+          meterBoxRelations={meterBoxRelations}
+          connectorTerminalRelations={connectorTerminalRelations}
+          matingPairRelations={matingPairRelations}
+          terminalFejRelations={terminalFejRelations}
+          terminalFejDisconnections={terminalFejDisconnections}
+          productNotes={productNotes}
+          maintenances={maintenances}
+          kanbanItems={kanbanItems}
+          warehouseTransactions={warehouseTransactions}
+          isPinned={isProductPinned(modalQuickProduct.productId, pinnedProductIds)}
+          onTogglePin={handleTogglePin}
+          onSaveProduct={handleSaveProduct}
+          onDeleteProduct={handleDeleteProduct}
+          onAddComponentRelation={handleAddComponentRelation}
+          onDeleteComponentRelation={handleDeleteComponentRelation}
+          onAddMeterBoxRelation={handleAddMeterBoxRelation}
+          onDeleteMeterBoxRelation={handleDeleteMeterBoxRelation}
+          onAddConnectorTerminalRelation={handleAddConnectorTerminalRelation}
+          onDeleteConnectorTerminalRelation={handleDeleteConnectorTerminalRelation}
+          onAddMatingPairRelation={handleAddMatingPairRelation}
+          onDeleteMatingPairRelation={handleDeleteMatingPairRelation}
+          similarRelations={similarRelations}
+          onAddSimilarRelation={handleAddSimilarRelation}
+          onDeleteSimilarRelation={handleDeleteSimilarRelation}
+          onAddTerminalFejRelation={handleAddTerminalFejRelation}
+          onDeleteTerminalFejRelation={handleDeleteTerminalFejRelation}
+          onSaveProductNote={handleSaveProductNote}
+          onDeleteProductNote={handleDeleteProductNote}
+          onSaveMaintenance={handleSaveMaintenance}
+          onDeleteMaintenance={handleDeleteMaintenance}
+          onDeleteAllMaintenanceForProduct={handleDeleteAllMaintenanceForProduct}
+          onNavigateToWarehouseMovement={handleNavigateToWarehouseMovement}
+          onNavigateToWarehousePosition={handleNavigateToWarehousePosition}
+          onDeleteWarehouseTransaction={handleDeleteWarehouseTransaction}
+          onOpenKanbanModal={handleOpenKanbanModalForProduct}
+          onNavigateToKanban={() => navigateTo('kanban')}
+          canEdit={isEditor}
         />
       )}
     </div>

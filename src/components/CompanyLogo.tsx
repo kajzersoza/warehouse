@@ -76,7 +76,7 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = ({
         title={showUploadTrigger ? "Céglogó megtekintése / feltöltése" : undefined}
       >
         <div
-          className={`${sizeClasses} bg-[#3A5D6B] border border-[#79B6B8]/30 shadow-xs overflow-hidden flex items-center justify-center transition-all duration-200 group-hover:ring-2 group-hover:ring-[#79B6B8]`}
+          className={`${sizeClasses} bg-white border border-stone-200 shadow-xs overflow-hidden flex items-center justify-center transition-all duration-200 group-hover:ring-2 group-hover:ring-[#79B6B8]`}
         >
           <img
             src={logoUrl}

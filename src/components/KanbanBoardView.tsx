@@ -42,6 +42,8 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<KanbanItem | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<KanbanItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Products lookup map for names and pictures
   const productMap = useMemo(() => {
@@ -254,10 +256,17 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
                             </span>
 
                             {/* Card Actions: Edit & Delete */}
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
-                                onClick={() => handleEdit(item)}
+                                draggable={false}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleEdit(item);
+                                }}
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-[#3A5D6B] hover:bg-slate-100 transition-colors cursor-pointer"
                                 title="Szerkesztés"
                               >
@@ -265,10 +274,13 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  if (window.confirm('Biztosan törölni szeretnéd ezt a Kanban tételt?')) {
-                                    onDeleteItem(item.id);
-                                  }
+                                draggable={false}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onTouchStart={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setItemToDelete(item);
                                 }}
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                                 title="Törlés"
@@ -399,6 +411,80 @@ export const KanbanBoardView: React.FC<KanbanBoardViewProps> = ({
         onSave={onSaveItem}
         onDelete={onDeleteItem}
       />
+
+      {/* Kanban Törlés Megerősítő Modális Ablak (iframe-kompatibilis, nem window.confirm) */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-red-200">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-gray-900">
+                  Kanban tétel törlése
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Ez a művelet nem vonható vissza
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-700">
+              Biztosan törölni szeretnéd ezt a tételt a Kanban tábláról?
+            </p>
+
+            <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5 text-xs">
+              {itemToDelete.title && (
+                <div className="font-bold text-gray-900">
+                  {itemToDelete.title}
+                </div>
+              )}
+              {itemToDelete.note && (
+                <div className="text-gray-600 italic">
+                  "{itemToDelete.note}"
+                </div>
+              )}
+              {itemToDelete.productIds.length > 0 && (
+                <div className="text-[#3A5D6B] font-mono font-bold">
+                  Kapcsolódó termékek: {itemToDelete.productIds.join(', ')}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setItemToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={async () => {
+                  const id = itemToDelete.id;
+                  setIsDeleting(true);
+                  try {
+                    await onDeleteItem(id);
+                    setItemToDelete(null);
+                  } catch (err) {
+                    console.error('Hiba a tétel törlésekor:', err);
+                  } finally {
+                    setIsDeleting(false);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isDeleting ? 'Törlés...' : 'Igen, törlés'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

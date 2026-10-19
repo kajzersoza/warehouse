@@ -100,6 +100,9 @@ export const ProductNotesSection: React.FC<ProductNotesSectionProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // In-app delete confirmation state
+  const [noteToDelete, setNoteToDelete] = useState<ProductNote | null>(null);
+
   // Lightbox zoom preview modal state
   const [activePreviewImage, setActivePreviewImage] = useState<string | null>(null);
 
@@ -250,13 +253,14 @@ export const ProductNotesSection: React.FC<ProductNotesSectionProps> = ({
     }
   };
 
-  const handleDelete = async (noteId: string) => {
-    if (window.confirm('Biztosan törölni szeretné ezt a Notesz bejegyzést?')) {
-      try {
-        await onDeleteNote(noteId);
-      } catch (err) {
-        console.error('Failed to delete note:', err);
-      }
+  const handleConfirmDelete = async () => {
+    if (!noteToDelete) return;
+    const noteId = noteToDelete.id;
+    setNoteToDelete(null);
+    try {
+      await onDeleteNote(noteId);
+    } catch (err) {
+      console.error('Failed to delete note:', err);
     }
   };
 
@@ -362,7 +366,7 @@ export const ProductNotesSection: React.FC<ProductNotesSectionProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(note.id)}
+                            onClick={() => setNoteToDelete(note)}
                             className="p-1.5 rounded-lg text-gray-400 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer"
                             title="Bejegyzés törlése"
                           >
@@ -828,6 +832,65 @@ export const ProductNotesSection: React.FC<ProductNotesSectionProps> = ({
               alt="Notesz fénykép nagyítás"
               className="max-h-[85vh] max-w-full object-contain rounded-xl mx-auto"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Notesz Törlés Megerősítő Modális Ablak (iframe-kompatibilis) */}
+      {noteToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-red-200">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-gray-900">
+                  Notesz bejegyzés törlése
+                </h3>
+                <p className="text-xs text-gray-500">
+                  Ez a művelet nem vonható vissza
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-700">
+              Biztosan törölni szeretné ezt a Notesz bejegyzést?
+            </p>
+
+            <div className="p-3 bg-red-50/50 rounded-xl border border-red-200 space-y-1 text-xs">
+              <div className="font-bold text-gray-900">
+                {noteToDelete.title || noteToDelete.nameChoice || 'Notesz bejegyzés'}
+              </div>
+              {noteToDelete.description && (
+                <div className="text-gray-600 line-clamp-2 italic">
+                  "{noteToDelete.description}"
+                </div>
+              )}
+              {noteToDelete.date && (
+                <div className="text-gray-500 font-mono text-[11px]">
+                  Dátum: {noteToDelete.date}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setNoteToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm transition-colors cursor-pointer"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Igen, törlés</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

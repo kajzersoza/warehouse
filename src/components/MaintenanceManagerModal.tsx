@@ -48,6 +48,7 @@ export const MaintenanceManagerModal: React.FC<MaintenanceManagerModalProps> = (
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [showConfirmDeleteAll, setShowConfirmDeleteAll] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<MaintenanceRecord | null>(null);
 
   // Pagination states to guarantee ultra-fast, zero-freeze rendering
   const [currentPage, setCurrentPage] = useState(1);
@@ -145,13 +146,13 @@ export const MaintenanceManagerModal: React.FC<MaintenanceManagerModalProps> = (
 
   if (!isOpen) return null;
 
-  const handleDeleteSingle = async (rec: MaintenanceRecord) => {
-    const confirmMsg = `Biztosan törölni szeretné ezt a karbantartási tételt?\n\n• Termék ID: ${rec.productId}\n• Státusz: ${rec.status}\n• Dátum: ${rec.date}${rec.changeItem ? `\n• Alkatrész csere: ${rec.changeItem}` : ''}`;
-    if (!window.confirm(confirmMsg)) return;
-
-    setDeletingId(rec.id);
+  const handleConfirmDeleteSingle = async () => {
+    if (!recordToDelete) return;
+    const id = recordToDelete.id;
+    setRecordToDelete(null);
+    setDeletingId(id);
     try {
-      await onDeleteMaintenance(rec.id);
+      await onDeleteMaintenance(id);
     } catch (err) {
       console.error('Failed to delete maintenance record:', err);
     } finally {
@@ -529,7 +530,7 @@ export const MaintenanceManagerModal: React.FC<MaintenanceManagerModalProps> = (
                         <td className="py-3 px-3 text-center whitespace-nowrap">
                           <button
                             type="button"
-                            onClick={() => handleDeleteSingle(rec)}
+                            onClick={() => setRecordToDelete(rec)}
                             disabled={isBeingDeleted}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-300 font-bold text-xs transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
                             title="Tétel törlése (egyesével)"
@@ -670,6 +671,72 @@ export const MaintenanceManagerModal: React.FC<MaintenanceManagerModalProps> = (
                     <span>Igen, Összes Törlése ({safeMaintenances.length} db)</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Egyedi Karbantartás Törlés Megerősítő Modális Ablak (iframe-kompatibilis) */}
+      {recordToDelete && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-rose-200">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-lg text-stone-900">
+                  Karbantartási tétel törlése
+                </h3>
+                <p className="text-xs text-stone-500">
+                  Ez a művelet nem vonható vissza
+                </p>
+              </div>
+            </div>
+
+            <p className="text-sm text-stone-700">
+              Biztosan törölni szeretné ezt a karbantartási tételt?
+            </p>
+
+            <div className="p-3.5 bg-stone-50 rounded-xl border border-stone-200 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-stone-500">Termék ID:</span>
+                <span className="font-mono font-black text-[#1e6075]">{recordToDelete.productId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500">Dátum:</span>
+                <span className="font-mono font-bold text-stone-800">{recordToDelete.date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-stone-500">Státusz:</span>
+                <span className="font-black text-stone-900">{recordToDelete.status}</span>
+              </div>
+              {recordToDelete.changeItem && (
+                <div className="flex justify-between">
+                  <span className="text-stone-500">Kicserélt alkatrész:</span>
+                  <span className="font-mono font-bold text-amber-900">{recordToDelete.changeItem}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-stone-100">
+              <button
+                type="button"
+                disabled={deletingId !== null}
+                onClick={() => setRecordToDelete(null)}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Mégse
+              </button>
+              <button
+                type="button"
+                disabled={deletingId !== null}
+                onClick={handleConfirmDeleteSingle}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{deletingId !== null ? 'Törlés...' : 'Igen, törlés'}</span>
               </button>
             </div>
           </div>

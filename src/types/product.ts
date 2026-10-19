@@ -66,6 +66,14 @@ export interface ProductTerminalFejDisconnection {
   updatedAt?: string;
 }
 
+export interface ProductSimilarRelation {
+  id: string; // Doc ID: productId1__productId2
+  productId1: string; // Termék ID 1 (Bármely termék)
+  productId2: string; // Termék ID 2 (Bármely termék - hasonló termék)
+  note?: string; // Opcionális megjegyzés / leírás
+  updatedAt?: string;
+}
+
 export interface ProductNote {
   id: string; // Unique note ID
   productId: string; // Termék ID (kapcsolódó termék)
@@ -120,5 +128,6 @@ export type ViewMode =
   | 'new-product'
   | 'warehouse-stats'
   | 'users-permissions'
-  | 'kanban';
+  | 'kanban'
+  | 'meterbox-finder';
 

@@ -343,17 +343,38 @@ export const WarehouseStatsView: React.FC<WarehouseStatsViewProps> = ({
     }
   };
 
-  const handleDeleteTx = async (id: string) => {
-    if (!window.confirm('Biztosan törölni szeretné ezt a készletmozgási tételt?')) return;
+  const [txToDelete, setTxToDelete] = useState<WarehouseTransaction | null>(null);
+  const [productPosToDelete, setProductPosToDelete] = useState<{ productId: string; positionId: string } | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+
+  const handleDeleteTx = (id: string) => {
+    const found = transactions.find((t) => t.id === id) || {
+      id,
+      productId: 'Ismeretlen',
+      positionId: '—',
+      quantity: 0,
+      date: new Date().toISOString().split('T')[0]
+    };
+    setTxToDelete(found);
+  };
+
+  const handleConfirmDeleteTx = async () => {
+    if (!txToDelete) return;
+    setIsDeletingItem(true);
     try {
-      await deleteWarehouseTransaction(id);
+      await deleteWarehouseTransaction(txToDelete.id);
+      setTxToDelete(null);
       if (onRefreshData) onRefreshData();
     } catch (err) {
       console.error('Failed to delete transaction:', err);
+    } finally {
+      setIsDeletingItem(false);
     }
   };
 
   const handleOpenMoveProduct = (prodId: string, prodName: string, currentPos: string, qty: number) => {
+    setMoveError(null);
     setMovingProductItem({
       productId: prodId,
       productName: prodName,
@@ -367,9 +388,10 @@ export const WarehouseStatsView: React.FC<WarehouseStatsViewProps> = ({
     e.preventDefault();
     if (!movingProductItem || !targetMovePositionId.trim()) return;
     if (movingProductItem.currentPositionId.toLowerCase() === targetMovePositionId.trim().toLowerCase()) {
-      alert('A célpozíció nem lehet azonos a jelenlegi pozícióval!');
+      setMoveError('A célpozíció nem lehet azonos a jelenlegi pozícióval!');
       return;
     }
+    setMoveError(null);
     setIsSubmittingMove(true);
     try {
       await updateProductPosition(
@@ -387,19 +409,21 @@ export const WarehouseStatsView: React.FC<WarehouseStatsViewProps> = ({
     }
   };
 
-  const handleDeleteProductPosition = async (prodId: string, posId: string) => {
-    if (
-      !window.confirm(
-        `Biztosan törölni szeretné a(z) ${prodId} termék pozícióját innen (${posId})? A termék ezen a pozíción szereplő tranzakciói törlésre kerülnek.`
-      )
-    ) {
-      return;
-    }
+  const handleDeleteProductPosition = (prodId: string, posId: string) => {
+    setProductPosToDelete({ productId: prodId, positionId: posId });
+  };
+
+  const handleConfirmDeleteProductPosition = async () => {
+    if (!productPosToDelete) return;
+    setIsDeletingItem(true);
     try {
-      await deleteProductFromPosition(prodId, posId);
+      await deleteProductFromPosition(productPosToDelete.productId, productPosToDelete.positionId);
+      setProductPosToDelete(null);
       if (onRefreshData) onRefreshData();
     } catch (err) {
       console.error('Failed to delete product from position:', err);
+    } finally {
+      setIsDeletingItem(false);
     }
   };
 
@@ -1725,7 +1749,13 @@ export const WarehouseStatsView: React.FC<WarehouseStatsViewProps> = ({
                 </p>
               </div>
 
-              <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100">
+                {moveError && (
+                  <p className="text-xs font-bold text-red-600 bg-red-50 p-2.5 rounded-lg border border-red-200">
+                    {moveError}
+                  </p>
+                )}
+
+                <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => {
@@ -1759,6 +1789,118 @@ export const WarehouseStatsView: React.FC<WarehouseStatsViewProps> = ({
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 1: Készletmozgási tétel megerősített törlése (kuka gomb megbízható működése böngésző alert/confirm nélkül) */}
+      {txToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-red-200 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-red-100 border border-red-200 flex items-center justify-center text-red-600 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-slate-900">
+                  Készletmozgási Tétel Törlése
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Biztosan törölni szeretné ezt a készletmozgási tételt a nyilvántartásból? A raktárkészlet azonnal újraszámolódik.
+                </p>
+
+                <div className="mt-4 p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Termék ID:</span>
+                    <span className="font-mono font-black text-slate-800">{txToDelete.productId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Raktári pozíció:</span>
+                    <span className="font-mono font-black text-blue-700">{txToDelete.positionId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Mennyiség:</span>
+                    <span className={`font-mono font-black ${txToDelete.quantity > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                      {txToDelete.quantity > 0 ? `+${txToDelete.quantity}` : txToDelete.quantity} db
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Dátum:</span>
+                    <span className="text-slate-700 font-bold">{txToDelete.date || '—'}</span>
+                  </div>
+                  {txToDelete.note && (
+                    <div className="flex justify-between border-t border-slate-200 pt-1.5 mt-1.5">
+                      <span className="text-slate-500 font-medium">Megjegyzés:</span>
+                      <span className="text-slate-700 italic truncate max-w-[200px]">{txToDelete.note}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setTxToDelete(null)}
+                    disabled={isDeletingItem}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+                  >
+                    Mégse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteTx}
+                    disabled={isDeletingItem}
+                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs shadow-md cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isDeletingItem ? 'Törlés...' : 'Tétel Végleges Törlése'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Termék pozíciójának megerősített törlése */}
+      {productPosToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-red-200 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-slate-900">
+                  Pozíció Törlése a Terméknél
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Biztosan törölni szeretné a(z) <strong className="font-mono text-slate-800">{productPosToDelete.productId}</strong> terméket a(z) <strong className="font-mono text-blue-700">{productPosToDelete.positionId}</strong> pozícióról?
+                </p>
+                <p className="text-xs text-rose-600 font-bold mt-2">
+                  A termék ezen a raktári pozíción szereplő tranzakciói és készlete törlésre kerülnek!
+                </p>
+
+                <div className="mt-6 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setProductPosToDelete(null)}
+                    disabled={isDeletingItem}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+                  >
+                    Mégse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteProductPosition}
+                    disabled={isDeletingItem}
+                    className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-md cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isDeletingItem ? 'Törlés...' : 'Igen, Pozíció Törlése'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

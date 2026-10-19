@@ -171,6 +171,28 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
               </div>
             </button>
 
+            {/* Mérődoboz kereső menüpont */}
+            <button
+              type="button"
+              onClick={() => handleNav('meterbox-finder')}
+              className={`w-full flex items-center justify-between p-3.5 rounded-xl font-bold text-lg transition-colors cursor-pointer ${
+                currentView === 'meterbox-finder'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'hover:bg-amber-50/80 text-[#211E1B]'
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <Gauge className={`w-6 h-6 ${currentView === 'meterbox-finder' ? 'text-white' : 'text-amber-600'}`} />
+                <div className="text-left">
+                  <span>Mérődoboz kereső</span>
+                  <span className={`block text-xs font-medium ${currentView === 'meterbox-finder' ? 'text-amber-100' : 'text-slate-500'}`}>
+                    Konnektor ellenpár & mérődoboz egyeztetés
+                  </span>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 opacity-70" />
+            </button>
+
             <button
               type="button"
               onClick={() => handleNav('new-product')}
@@ -703,6 +725,14 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
               <span>Bejelentkezés / Adatlap</span>
             </button>
           )}
+
+          {/* Version / Vágópont info */}
+          <div className="pt-2.5 text-center">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-[#DBD8D5]/30 text-stone-600 border border-[#DBD8D5]">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span>Verzió 1.0 (Stabil Vágópont)</span>
+            </span>
+          </div>
         </div>
       </div>
 

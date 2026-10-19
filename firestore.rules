@@ -109,6 +109,16 @@ service cloud.firestore {
         && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
     }
 
+    function isValidProductSimilar(data) {
+      return data.keys().hasAll(['productId1', 'productId2'])
+        && data.keys().hasOnly(['id', 'productId1', 'productId2', 'note', 'updatedAt'])
+        && data.productId1 is string && data.productId1.size() <= 100
+        && data.productId2 is string && data.productId2.size() <= 100
+        && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+        && (!('id' in data) || (data.id is string && data.id.size() <= 200))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
     function isValidProductNote(data) {
       return data.keys().hasAll(['productId', 'title'])
         && data.keys().hasOnly(['id', 'productId', 'title', 'description', 'date', 'url', 'nameChoice', 'images', 'createdAt', 'updatedAt'])
@@ -278,6 +288,19 @@ service cloud.firestore {
 
       allow update: if isValidId(docId)
         && isValidProductTerminalFejDisconnection(incoming());
+
+      allow delete: if isValidId(docId);
+    }
+
+    // Product Similar Relations (Bármely termék <-> Bármely termék Hasonló kapcsolat)
+    match /product_similars/{docId} {
+      allow get, list: if true;
+
+      allow create: if isValidId(docId)
+        && isValidProductSimilar(incoming());
+
+      allow update: if isValidId(docId)
+        && isValidProductSimilar(incoming());
 
       allow delete: if isValidId(docId);
     }

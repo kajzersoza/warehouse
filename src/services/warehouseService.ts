@@ -18,9 +18,51 @@ export const WAREHOUSE_TRANSACTIONS_COLLECTION = 'warehouse_transactions';
 
 const STORAGE_KEY_POSITIONS = 'raktar_warehouse_positions_v1';
 const STORAGE_KEY_TRANSACTIONS = 'raktar_warehouse_transactions_v1';
+const STORAGE_KEY_DELETED_TRANSACTIONS = 'raktar_warehouse_deleted_txs_v1';
 
 let memoryPositions: WarehousePosition[] | null = null;
 let memoryTransactions: WarehouseTransaction[] | null = null;
+
+export function getDeletedWarehouseTransactionIds(): Set<string> {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_DELETED_TRANSACTIONS);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr);
+      }
+    } catch (e) {
+      console.warn('Could not read deleted transactions from localStorage:', e);
+    }
+  }
+  return new Set();
+}
+
+function markWarehouseTransactionDeleted(txId: string): void {
+  const set = getDeletedWarehouseTransactionIds();
+  set.add(txId);
+  set.add(sanitizeDocId(txId));
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY_DELETED_TRANSACTIONS, JSON.stringify(Array.from(set)));
+    } catch (e) {
+      console.warn('Could not save deleted transactions to localStorage:', e);
+    }
+  }
+}
+
+function unmarkWarehouseTransactionDeleted(txId: string): void {
+  const set = getDeletedWarehouseTransactionIds();
+  set.delete(txId);
+  set.delete(sanitizeDocId(txId));
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY_DELETED_TRANSACTIONS, JSON.stringify(Array.from(set)));
+    } catch (e) {
+      console.warn('Could not save deleted transactions to localStorage:', e);
+    }
+  }
+}
 
 export function getLocalStoredWarehousePositions(): WarehousePosition[] {
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
@@ -29,6 +71,13 @@ export function getLocalStoredWarehousePositions(): WarehousePosition[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // Ha kevesebb pozíció van a tárolóban mint az alapértelmezett, egyesítsük, hogy ne vesszenek el pozíciók
+          if (parsed.length < INITIAL_WAREHOUSE_POSITIONS.length) {
+            const map = new Map<string, WarehousePosition>();
+            INITIAL_WAREHOUSE_POSITIONS.forEach((p) => map.set(p.id.toLowerCase(), p));
+            parsed.forEach((p) => map.set(p.id.toLowerCase(), p));
+            return Array.from(map.values());
+          }
           return parsed;
         }
       }
@@ -51,39 +100,46 @@ export function saveLocalWarehousePositions(positions: WarehousePosition[]): voi
 }
 
 export function getLocalStoredWarehouseTransactions(): WarehouseTransaction[] {
+  const deletedIds = getDeletedWarehouseTransactionIds();
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_TRANSACTIONS);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((tx) => ({
-            ...tx,
-            quantity:
-              tx.quantity !== undefined && tx.quantity !== null && !isNaN(Number(tx.quantity))
-                ? Number(tx.quantity)
-                : 0
-          }));
+          return parsed
+            .filter((tx) => !deletedIds.has(tx.id) && !deletedIds.has(sanitizeDocId(tx.id)))
+            .map((tx) => ({
+              ...tx,
+              quantity:
+                tx.quantity !== undefined && tx.quantity !== null && !isNaN(Number(tx.quantity))
+                  ? Number(tx.quantity)
+                  : 0
+            }));
         }
       }
     } catch (e) {
       console.warn('Could not read warehouse transactions from localStorage:', e);
     }
   }
-  return (memoryTransactions || INITIAL_WAREHOUSE_TRANSACTIONS).map((tx) => ({
-    ...tx,
-    quantity:
-      tx.quantity !== undefined && tx.quantity !== null && !isNaN(Number(tx.quantity))
-        ? Number(tx.quantity)
-        : 0
-  }));
+  return (memoryTransactions || INITIAL_WAREHOUSE_TRANSACTIONS)
+    .filter((tx) => !deletedIds.has(tx.id) && !deletedIds.has(sanitizeDocId(tx.id)))
+    .map((tx) => ({
+      ...tx,
+      quantity:
+        tx.quantity !== undefined && tx.quantity !== null && !isNaN(Number(tx.quantity))
+          ? Number(tx.quantity)
+          : 0
+    }));
 }
 
 export function saveLocalWarehouseTransactions(transactions: WarehouseTransaction[]): void {
-  memoryTransactions = transactions;
+  const deletedIds = getDeletedWarehouseTransactionIds();
+  const filtered = transactions.filter((tx) => !deletedIds.has(tx.id) && !deletedIds.has(sanitizeDocId(tx.id)));
+  memoryTransactions = filtered;
   if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
     try {
-      localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(transactions));
+      localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(filtered));
     } catch (e) {
       console.warn('Could not save warehouse transactions to localStorage:', e);
     }
@@ -98,26 +154,29 @@ export function subscribeToWarehousePositions(
     const unsubscribe = onSnapshot(
       collection(db, WAREHOUSE_POSITIONS_COLLECTION),
       (snapshot) => {
+        const map = new Map<string, WarehousePosition>();
+        // Alapértelmezett pozíciók mindig megmaradnak alapként
+        INITIAL_WAREHOUSE_POSITIONS.forEach((p) => map.set(p.id.toLowerCase(), p));
+
         if (!snapshot.empty) {
-          const list: WarehousePosition[] = [];
           snapshot.forEach((d) => {
             const data = d.data();
-            list.push({
-              id: data.id || d.id,
-              name: data.name || data.id || d.id,
-              description: data.description,
-              zone: data.zone,
-              isCustom: data.isCustom,
+            const id = data.id || d.id;
+            map.set(id.toLowerCase(), {
+              id,
+              name: data.name || id,
+              description: data.description || '',
+              zone: data.zone || 'Pozíció',
+              isCustom: Boolean(data.isCustom),
               createdAt: data.createdAt,
               updatedAt: data.updatedAt
             });
           });
-          saveLocalWarehousePositions(list);
-          onUpdate(list);
-        } else {
-          const current = getLocalStoredWarehousePositions();
-          onUpdate(current);
         }
+
+        const merged = Array.from(map.values());
+        saveLocalWarehousePositions(merged);
+        onUpdate(merged);
       },
       (error) => {
         console.warn('Warehouse positions snapshot error:', error);
@@ -141,27 +200,56 @@ export function subscribeToWarehouseTransactions(
     const unsubscribe = onSnapshot(
       collection(db, WAREHOUSE_TRANSACTIONS_COLLECTION),
       (snapshot) => {
+        const deletedIds = getDeletedWarehouseTransactionIds();
+        const serverList: WarehouseTransaction[] = [];
+        const serverIdSet = new Set<string>();
+
         if (!snapshot.empty) {
-          const list: WarehouseTransaction[] = [];
           snapshot.forEach((d) => {
             const data = d.data();
-            list.push({
-              id: data.id || d.id,
-              positionId: data.positionId,
-              productId: data.productId,
+            const id = data.id || d.id;
+            // Ha a felhasználó korábban törölte, ne engedjük újra megjelenni
+            if (deletedIds.has(id) || deletedIds.has(d.id) || deletedIds.has(sanitizeDocId(id))) {
+              return;
+            }
+            serverIdSet.add(id);
+            serverIdSet.add(d.id);
+            serverIdSet.add(sanitizeDocId(id));
+
+            serverList.push({
+              id,
+              positionId: String(data.positionId || '').trim(),
+              productId: String(data.productId || '').trim(),
               quantity: Number(data.quantity) || 0,
-              date: data.date,
-              note: data.note,
-              createdAt: data.createdAt,
-              updatedAt: data.updatedAt
+              date: String(data.date || '').trim() || new Date().toISOString().split('T')[0],
+              note: data.note ? String(data.note).trim() : undefined,
+              createdAt: data.createdAt || new Date().toISOString(),
+              updatedAt: data.updatedAt || new Date().toISOString()
             });
           });
-          saveLocalWarehouseTransactions(list);
-          onUpdate(list);
-        } else {
-          const current = getLocalStoredWarehouseTransactions();
-          onUpdate(current);
         }
+
+        // Helyileg tárolt tranzakciók megtartása: ha valamit a felhasználó rögzített, de még nem látszik
+        // vagy a kezdeti adatokból való, az ne vesszen el a szerver snapshot frissülésével!
+        const localCurrent = getLocalStoredWarehouseTransactions();
+        const retainedLocal = localCurrent.filter((tx) => {
+          if (deletedIds.has(tx.id) || deletedIds.has(sanitizeDocId(tx.id))) return false;
+          if (serverIdSet.has(tx.id) || serverIdSet.has(sanitizeDocId(tx.id))) return false;
+          return true;
+        });
+
+        // Ha van olyan lokálisan létrehozott tranzakció, ami még nincs a Firestore-ban, mentsük fel a háttérben
+        if (retainedLocal.length > 0) {
+          retainedLocal.forEach((tx) => {
+            if (tx.id.startsWith('tx_') && !tx.id.startsWith('tx_init_')) {
+              saveWarehouseTransaction(tx).catch(() => {});
+            }
+          });
+        }
+
+        const combined = [...serverList, ...retainedLocal];
+        saveLocalWarehouseTransactions(combined);
+        onUpdate(combined);
       },
       (error) => {
         console.warn('Warehouse transactions snapshot error:', error);
@@ -184,6 +272,8 @@ export async function saveWarehousePosition(position: WarehousePosition): Promis
     ...position,
     id: position.id.trim(),
     name: position.name.trim(),
+    description: position.description || '',
+    zone: position.zone || 'Pozíció',
     updatedAt: now
   };
 
@@ -220,41 +310,68 @@ export async function saveWarehouseTransaction(
   const txId = txData.id || `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const docId = sanitizeDocId(txId);
 
-  const payload: WarehouseTransaction = {
+  // Levesszük a törölt listáról, ha újra létrehozzák
+  unmarkWarehouseTransactionDeleted(txId);
+
+  // Tisztított Firestore payload: SOHA ne legyen benne undefined érték, mert a Firestore setDoc elutasítja!
+  const firestorePayload: Record<string, any> = {
     id: txId,
     positionId: txData.positionId.trim(),
     productId: txData.productId.trim(),
     quantity: Number(txData.quantity) || 0,
-    date: txData.date.trim(),
+    date: txData.date ? txData.date.trim() : new Date().toISOString().split('T')[0],
+    createdAt: now,
+    updatedAt: now
+  };
+
+  if (txData.note && txData.note.trim()) {
+    firestorePayload.note = txData.note.trim();
+  }
+
+  const localPayload: WarehouseTransaction = {
+    id: txId,
+    positionId: firestorePayload.positionId,
+    productId: firestorePayload.productId,
+    quantity: firestorePayload.quantity,
+    date: firestorePayload.date,
     note: txData.note?.trim() || undefined,
     createdAt: now,
     updatedAt: now
   };
 
-  try {
-    await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), payload);
-  } catch (e) {
-    console.warn('Firestore transaction save failed, saving locally:', e);
-  }
-
+  // 1. Mentés helyi tárolóba azonnal, hogy ne vesszen el
   const current = getLocalStoredWarehouseTransactions();
-  const updated = [payload, ...current.filter((t) => t.id !== txId)];
+  const updated = [localPayload, ...current.filter((t) => t.id !== txId && sanitizeDocId(t.id) !== docId)];
   saveLocalWarehouseTransactions(updated);
 
-  return payload;
+  // 2. Mentés Firestore adatbázisba
+  try {
+    await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), firestorePayload);
+  } catch (e) {
+    console.warn('Firestore transaction save failed, retained in local storage:', e);
+  }
+
+  return localPayload;
 }
 
 export async function deleteWarehouseTransaction(txId: string): Promise<void> {
+  markWarehouseTransactionDeleted(txId);
   const docId = sanitizeDocId(txId);
+
+  // 1. Törlés azonnal a helyi tárolóból, hogy a felület azonnal frissüljön
+  const current = getLocalStoredWarehouseTransactions();
+  const updated = current.filter((t) => t.id !== txId && sanitizeDocId(t.id) !== docId);
+  saveLocalWarehouseTransactions(updated);
+
+  // 2. Törlés a Firestore-ból mind a sanitizeDocId-val, mind az eredeti id-vel
   try {
     await deleteDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId));
+    if (docId !== txId) {
+      await deleteDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, txId)).catch(() => {});
+    }
   } catch (e) {
-    console.warn('Firestore transaction delete failed, deleting locally:', e);
+    console.warn('Firestore transaction delete failed, deleted locally:', e);
   }
-
-  const current = getLocalStoredWarehouseTransactions();
-  const updated = current.filter((t) => t.id !== txId);
-  saveLocalWarehouseTransactions(updated);
 }
 
 /**
@@ -286,9 +403,21 @@ export async function updateProductPosition(
         positionId: cleanNewPos,
         updatedAt: now
       };
+      const firestoreUpdated: Record<string, any> = {
+        id: updated.id,
+        positionId: updated.positionId,
+        productId: updated.productId,
+        quantity: Number(updated.quantity) || 0,
+        date: updated.date || new Date().toISOString().split('T')[0],
+        createdAt: updated.createdAt || now,
+        updatedAt: now
+      };
+      if (updated.note && updated.note.trim()) {
+        firestoreUpdated.note = updated.note.trim();
+      }
       try {
         const docId = sanitizeDocId(tx.id);
-        await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), updated);
+        await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), firestoreUpdated);
       } catch (e) {
         console.warn('Firestore tx update failed:', e);
       }
@@ -322,7 +451,16 @@ export async function updateProductPosition(
     };
     try {
       const docId = sanitizeDocId(newTx.id);
-      await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), newTx);
+      await setDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId), {
+        id: newTx.id,
+        productId: newTx.productId,
+        positionId: newTx.positionId,
+        quantity: 0,
+        date: newTx.date,
+        note: newTx.note,
+        createdAt: now,
+        updatedAt: now
+      });
     } catch (e) {
       console.warn('Firestore tx save failed:', e);
     }
@@ -350,9 +488,13 @@ export async function deleteProductFromPosition(
   );
 
   for (const tx of toDelete) {
+    markWarehouseTransactionDeleted(tx.id);
+    const docId = sanitizeDocId(tx.id);
     try {
-      const docId = sanitizeDocId(tx.id);
       await deleteDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, docId));
+      if (docId !== tx.id) {
+        await deleteDoc(doc(db, WAREHOUSE_TRANSACTIONS_COLLECTION, tx.id)).catch(() => {});
+      }
     } catch (e) {
       console.warn('Firestore tx delete failed:', e);
     }

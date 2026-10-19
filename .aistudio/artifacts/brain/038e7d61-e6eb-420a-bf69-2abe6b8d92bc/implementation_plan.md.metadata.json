@@ -1,0 +1,6 @@
+{
+  "summary": "Részletes megvalósítási terv a Mérődoboz kereső menüponthoz és funkcióhoz: gyártandó termék beépülő konnektorainak beolvasása, kézi konnektor-módosítás, ellenpárok kikeresése, a mérődobozokba beépülő alkatrészek egyeztetése és 3 szintű színkódolás (Zöld, Sárga, Narancssárga).",
+  "updatedAt": "2026-10-16T09:43:48.271186815Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
