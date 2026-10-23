@@ -123,6 +123,8 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'FULL' | 'QUANTITY_MISMATCH' | 'PARTIAL'>('ALL');
   // Megjelenítési mód: Összes | Csak egyedi dobozok | Csak több dobozos kombinációk
   const [viewModeFilter, setViewModeFilter] = useState<'ALL' | 'SINGLE' | 'COMBOS'>('ALL');
+  // Dobozok száma szerinti szűrés kombinációknál: 'ALL' | 2 | 3 | 4 | 5
+  const [comboSizeFilter, setComboSizeFilter] = useState<'ALL' | 2 | 3 | 4 | 5>('ALL');
   const [resultSearchQuery, setResultSearchQuery] = useState('');
 
   // 1. Termékek gyorstérképe (ID -> Product)
@@ -373,13 +375,22 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
     return results;
   }, [connectorRequirements, allMeterBoxes, meterBoxComponentsMap, productMap]);
 
-  // 7. TÖBB MÉRŐDOBOZOS KOMBINÁCIÓS MOTOR (X + Y + Z)
-  // Ha nincs egyetlen mérődoboz, amin az összes konnektor megtalálható (vagy kombinált megoldás keresése esetén),
-  // több mérődobozból rakja össze a megfelelő lefedettséget, külön jelölve: X + Y (+ Z).
+  // 7. TÖBB MÉRŐDOBOZOS KOMBINÁCIÓS MOTOR (X + Y + Z + W)
+  // Ha nincs egyetlen mérődoboz, amin az összes konnektor / darabszám megtalálható (vagy kombinált megoldás keresése esetén),
+  // több mérődobozból rakja össze a megfelelő lefedettséget és darabszámot, külön jelölve: X + Y (+ Z + W).
   const combinationResults: MeterBoxCombinationResult[] = useMemo(() => {
-    if (connectorRequirements.length < 2) return [];
+    if (connectorRequirements.length === 0) return [];
 
     const totalReq = connectorRequirements.length;
+
+    // Azon mérődobozok azonosítói, amelyek önmagukban is minden kritériumnak (darabszám + ellenpár) megfelelnek
+    // "amikor talál egy mérődobozt ami minden kritériumnak megfelel : darabszám , ellenpár ,ez jó , de amikor kombinációt rak össze több mérődobozról , ezeket hagyja ki hiszen ezeken minden megvan"
+    const fullMatchBoxIdSet = new Set<string>();
+    matchResults.forEach((r) => {
+      if (r.matchType === 'FULL') {
+        fullMatchBoxIdSet.add(r.meterBox.productId.trim().toLowerCase());
+      }
+    });
 
     // Minden mérődobozra kigyűjtjük, mely konnektorokhoz rendelkezik beépülő ellenpárral
     interface CandidateBox {
@@ -392,6 +403,13 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
 
     allMeterBoxes.forEach((mb) => {
       const mbId = mb.productId.trim().toLowerCase();
+
+      // Ha ez a mérődoboz önmagában is minden kritériumnak (darabszám + ellenpár) megfelel,
+      // kihagyjuk a kombinációkból, hiszen ezen a dobozon már minden szükséges alkatrész megvan!
+      if (fullMatchBoxIdSet.has(mbId)) {
+        return;
+      }
+
       const mbComps = meterBoxComponentsMap.get(mbId) || new Map<string, number>();
       const contribMap = new Map<string, { mpId: string; mpName?: string; mpThumb?: string | null; qty: number }>();
 
@@ -415,14 +433,39 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
       });
 
       if (contribMap.size > 0) {
-        candidates.push({ meterBox: mb, contributions: contribMap });
+        // További biztonsági szűrés: ha egy doboz a darabszámokkal együtt is önmagában teljes lefedettséget nyújt,
+        // szintén kihagyjuk a kombinációkból
+        const isSelfSufficient =
+          contribMap.size === totalReq &&
+          connectorRequirements.every((req) => {
+            const found = contribMap.get(req.connectorId.trim().toLowerCase());
+            return found && found.qty >= req.requiredQty;
+          });
+
+        if (!isSelfSufficient) {
+          candidates.push({ meterBox: mb, contributions: contribMap });
+        }
       }
     });
 
     if (candidates.length < 2) return [];
 
-    // Rendezés a legtöbb konnektort tartalmazó dobozok előre
-    candidates.sort((a, b) => b.contributions.size - a.contributions.size);
+    // Rendezés: legtöbb konnektort tartalmazó, illetve legnagyobb hasznos darabszámot adó dobozok előre
+    candidates.sort((a, b) => {
+      if (b.contributions.size !== a.contributions.size) {
+        return b.contributions.size - a.contributions.size;
+      }
+      let usefulQtyA = 0;
+      let usefulQtyB = 0;
+      connectorRequirements.forEach((req) => {
+        const k = req.connectorId.trim().toLowerCase();
+        const fA = a.contributions.get(k);
+        if (fA) usefulQtyA += Math.min(fA.qty, req.requiredQty);
+        const fB = b.contributions.get(k);
+        if (fB) usefulQtyB += Math.min(fB.qty, req.requiredQty);
+      });
+      return usefulQtyB - usefulQtyA;
+    });
 
     const combos: MeterBoxCombinationResult[] = [];
     const seenCombos = new Set<string>();
@@ -484,8 +527,16 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
         };
       });
 
-      // Csak olyan kombináció jöhet, ami legalább 2 konnektort fed
-      if (coveredCount < 2) return null;
+      // Legalább 1 konnektort fednie kell, több elvárt konnektor esetén legalább 2-t
+      const minCovered = Math.min(2, totalReq);
+      if (coveredCount < minCovered) return null;
+
+      // Kizárjuk, ha a kombinációban bármelyik doboz önmagában már teljes lefedettségű és elegendő darabszámú
+      for (const box of boxes) {
+        if (fullMatchBoxIdSet.has(box.productId.trim().toLowerCase())) {
+          return null;
+        }
+      }
 
       // Minden egyes doboznak hozzá kell tennie a lefedettséghez vagy darabszámhoz (nem lehet felesleges passzív doboz)
       for (let i = 0; i < boxes.length; i++) {
@@ -494,6 +545,41 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
           b.contributions.some((c) => c.meterBoxId === thisBoxId)
         );
         if (!contributesSomething) return null;
+      }
+
+      // Több dobozos kombinációknál kizárjuk, ha bármelyik szűkebb részhalmaz önmagában is 100%-os FULL lefedettséget ad
+      if (boxes.length > 2) {
+        for (let removeIdx = 0; removeIdx < boxes.length; removeIdx++) {
+          const subBoxes = boxes.filter((_, idx) => idx !== removeIdx);
+          const subMaps = contribMaps.filter((_, idx) => idx !== removeIdx);
+          let subCovered = 0;
+          let subSufficient = 0;
+
+          connectorRequirements.forEach((req) => {
+            const cKey = req.connectorId.trim().toLowerCase();
+            let subAvailQty = 0;
+            let subHasMp = false;
+
+            subBoxes.forEach((_, sIdx) => {
+              const found = subMaps[sIdx].get(cKey);
+              if (found) {
+                subHasMp = true;
+                subAvailQty += found.qty;
+              }
+            });
+
+            if (subHasMp) {
+              subCovered++;
+              if (subAvailQty >= req.requiredQty) {
+                subSufficient++;
+              }
+            }
+          });
+
+          if (subCovered === totalReq && subSufficient === totalReq) {
+            return null; // A kombináció felesleges dobozt tartalmaz, mert a többi már önmagában is FULL fedést nyújt
+          }
+        }
       }
 
       let matchType: 'FULL' | 'QUANTITY_MISMATCH' | 'PARTIAL';
@@ -525,41 +611,55 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
       };
     };
 
+    const combos2: MeterBoxCombinationResult[] = [];
+    const combos3: MeterBoxCombinationResult[] = [];
+    const combos4: MeterBoxCombinationResult[] = [];
+    const combos5: MeterBoxCombinationResult[] = [];
+
+    const minCovered = Math.min(2, totalReq);
+
     // 1. Két dobozos kombinációk keresése (X + Y)
-    const topCandidates = candidates.slice(0, 35);
-    for (let i = 0; i < topCandidates.length; i++) {
-      for (let j = i + 1; j < topCandidates.length; j++) {
-        const c1 = topCandidates[i];
-        const c2 = topCandidates[j];
+    const pool2 = candidates.slice(0, 35);
+    for (let i = 0; i < pool2.length; i++) {
+      for (let j = i + 1; j < pool2.length; j++) {
+        const c1 = pool2[i];
+        const c2 = pool2[j];
 
         let combinedSize = 0;
+        let hasQuantityAddition = false;
+
         connectorRequirements.forEach((req) => {
           const k = req.connectorId.trim().toLowerCase();
-          if (c1.contributions.has(k) || c2.contributions.has(k)) {
+          const f1 = c1.contributions.get(k);
+          const f2 = c2.contributions.get(k);
+          if (f1 || f2) {
             combinedSize++;
+          }
+          if (f1 && f2) {
+            if (f1.qty < req.requiredQty || f2.qty < req.requiredQty) {
+              hasQuantityAddition = true;
+            }
           }
         });
 
-        // Csak akkor vizsgáljuk, ha a két doboz együtt több konnektort fed le, mint külön-külön
-        if (combinedSize > Math.max(c1.contributions.size, c2.contributions.size)) {
+        if (combinedSize > Math.max(c1.contributions.size, c2.contributions.size) || hasQuantityAddition) {
           const res = evaluateCombination([c1.meterBox, c2.meterBox], [c1.contributions, c2.contributions]);
           if (res) {
-            combos.push(res);
+            combos2.push(res);
           }
         }
       }
     }
 
-    // 2. Három dobozos kombinációk (X + Y + Z) ha van legalább 3 konnektor és szükséges
-    const hasFullTwoBox = combos.some((c) => c.matchType === 'FULL' && c.boxes.length === 2);
-    if (totalReq >= 3 && (!hasFullTwoBox || combos.length < 6)) {
-      const tripletPool = topCandidates.slice(0, 15);
-      for (let i = 0; i < tripletPool.length; i++) {
-        for (let j = i + 1; j < tripletPool.length; j++) {
-          for (let k = j + 1; k < tripletPool.length; k++) {
-            const c1 = tripletPool[i];
-            const c2 = tripletPool[j];
-            const c3 = tripletPool[k];
+    // 2. Három dobozos kombinációk keresése (X + Y + Z)
+    if (candidates.length >= 3) {
+      const pool3 = candidates.slice(0, 18);
+      for (let i = 0; i < pool3.length; i++) {
+        for (let j = i + 1; j < pool3.length; j++) {
+          for (let k = j + 1; k < pool3.length; k++) {
+            const c1 = pool3[i];
+            const c2 = pool3[j];
+            const c3 = pool3[k];
 
             let combinedSize = 0;
             connectorRequirements.forEach((req) => {
@@ -569,14 +669,13 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
               }
             });
 
-            // Csak akkor, ha a 3 doboz együttesen teljes lefedettséget ad
-            if (combinedSize === totalReq) {
+            if (combinedSize >= minCovered) {
               const res = evaluateCombination(
                 [c1.meterBox, c2.meterBox, c3.meterBox],
                 [c1.contributions, c2.contributions, c3.contributions]
               );
               if (res) {
-                combos.push(res);
+                combos3.push(res);
               }
             }
           }
@@ -584,22 +683,128 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
       }
     }
 
-    // Rendezés:
+    // 3. Négy dobozos kombinációk keresése (X + Y + Z + W)
+    if (candidates.length >= 4) {
+      const pool4 = candidates.slice(0, 13);
+      for (let i = 0; i < pool4.length; i++) {
+        for (let j = i + 1; j < pool4.length; j++) {
+          for (let k = j + 1; k < pool4.length; k++) {
+            for (let l = k + 1; l < pool4.length; l++) {
+              const c1 = pool4[i];
+              const c2 = pool4[j];
+              const c3 = pool4[k];
+              const c4 = pool4[l];
+
+              let combinedSize = 0;
+              connectorRequirements.forEach((req) => {
+                const key = req.connectorId.trim().toLowerCase();
+                if (c1.contributions.has(key) || c2.contributions.has(key) || c3.contributions.has(key) || c4.contributions.has(key)) {
+                  combinedSize++;
+                }
+              });
+
+              if (combinedSize >= minCovered) {
+                const res = evaluateCombination(
+                  [c1.meterBox, c2.meterBox, c3.meterBox, c4.meterBox],
+                  [c1.contributions, c2.contributions, c3.contributions, c4.contributions]
+                );
+                if (res) {
+                  combos4.push(res);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Öt dobozos kombinációk keresése (5 mérődoboz)
+    if (candidates.length >= 5) {
+      const pool5 = candidates.slice(0, 10);
+      for (let i = 0; i < pool5.length; i++) {
+        for (let j = i + 1; j < pool5.length; j++) {
+          for (let k = j + 1; k < pool5.length; k++) {
+            for (let l = k + 1; l < pool5.length; l++) {
+              for (let m = l + 1; m < pool5.length; m++) {
+                const c1 = pool5[i];
+                const c2 = pool5[j];
+                const c3 = pool5[k];
+                const c4 = pool5[l];
+                const c5 = pool5[m];
+
+                let combinedSize = 0;
+                connectorRequirements.forEach((req) => {
+                  const key = req.connectorId.trim().toLowerCase();
+                  if (
+                    c1.contributions.has(key) ||
+                    c2.contributions.has(key) ||
+                    c3.contributions.has(key) ||
+                    c4.contributions.has(key) ||
+                    c5.contributions.has(key)
+                  ) {
+                    combinedSize++;
+                  }
+                });
+
+                if (combinedSize >= minCovered) {
+                  const res = evaluateCombination(
+                    [c1.meterBox, c2.meterBox, c3.meterBox, c4.meterBox, c5.meterBox],
+                    [c1.contributions, c2.contributions, c3.contributions, c4.contributions, c5.contributions]
+                  );
+                  if (res) {
+                    combos5.push(res);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Mindegyik dobozméret kategóriát külön is sorrendbe állítunk (FULL elöl)
+    const sortCombos = (arr: MeterBoxCombinationResult[]) => {
+      const priorityOrder = { FULL: 1, QUANTITY_MISMATCH: 2, PARTIAL: 3 };
+      arr.sort((a, b) => {
+        const pA = priorityOrder[a.matchType];
+        const pB = priorityOrder[b.matchType];
+        if (pA !== pB) return pA - pB;
+        if (b.sufficientQtyCount !== a.sufficientQtyCount) return b.sufficientQtyCount - a.sufficientQtyCount;
+        if (b.coveredCount !== a.coveredCount) return b.coveredCount - a.coveredCount;
+        return a.titleFormula.localeCompare(b.titleFormula);
+      });
+    };
+
+    sortCombos(combos2);
+    sortCombos(combos3);
+    sortCombos(combos4);
+    sortCombos(combos5);
+
+    // Kategóriánként megtartjuk a legjobbakat, hogy egyik dobozszám se szoruljon ki
+    const top2 = combos2.slice(0, 25);
+    const top3 = combos3.slice(0, 25);
+    const top4 = combos4.slice(0, 20);
+    const top5 = combos5.slice(0, 15);
+
+    const allCombos = [...top2, ...top3, ...top4, ...top5];
+
+    // Globális rendezés az összképhez:
     // 1. Zöld FULL -> Sárga QUANTITY_MISMATCH -> Narancs PARTIAL
-    // 2. Kevesebb doboz előre (2 doboz megelőzi a 3-at)
-    // 3. Több lefedett konnektor
-    combos.sort((a, b) => {
+    // 2. Kevesebb doboz előre (2 doboz megelőzi a 3-at, 4-et, 5-öt)
+    // 3. Több lefedett konnektor és darabszám
+    allCombos.sort((a, b) => {
       const priorityOrder = { FULL: 1, QUANTITY_MISMATCH: 2, PARTIAL: 3 };
       const pA = priorityOrder[a.matchType];
       const pB = priorityOrder[b.matchType];
       if (pA !== pB) return pA - pB;
       if (a.boxes.length !== b.boxes.length) return a.boxes.length - b.boxes.length;
+      if (b.sufficientQtyCount !== a.sufficientQtyCount) return b.sufficientQtyCount - a.sufficientQtyCount;
       if (b.coveredCount !== a.coveredCount) return b.coveredCount - a.coveredCount;
       return a.titleFormula.localeCompare(b.titleFormula);
     });
 
-    return combos.slice(0, 25);
-  }, [connectorRequirements, allMeterBoxes, meterBoxComponentsMap, productMap]);
+    return allCombos;
+  }, [connectorRequirements, allMeterBoxes, meterBoxComponentsMap, productMap, matchResults]);
 
   // Szűrt egyedi találati lista
   const filteredResults = useMemo(() => {
@@ -627,6 +832,10 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
   const filteredCombinations = useMemo(() => {
     let list = combinationResults;
 
+    if (comboSizeFilter !== 'ALL') {
+      list = list.filter((r) => r.boxes.length === comboSizeFilter);
+    }
+
     if (statusFilter !== 'ALL') {
       list = list.filter((r) => r.matchType === statusFilter);
     }
@@ -647,7 +856,7 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
     }
 
     return list;
-  }, [combinationResults, statusFilter, resultSearchQuery]);
+  }, [combinationResults, comboSizeFilter, statusFilter, resultSearchQuery]);
 
   // Statisztikai számlálók a szűrő gombokhoz (külön egyedi és kombinált adatokkal)
   const counts = useMemo(() => {
@@ -664,11 +873,20 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
     let comboFull = 0;
     let comboQtyMismatch = 0;
     let comboPartial = 0;
+    let combo2Count = 0;
+    let combo3Count = 0;
+    let combo4Count = 0;
+    let combo5Count = 0;
 
     combinationResults.forEach((r) => {
       if (r.matchType === 'FULL') comboFull++;
       else if (r.matchType === 'QUANTITY_MISMATCH') comboQtyMismatch++;
       else if (r.matchType === 'PARTIAL') comboPartial++;
+
+      if (r.boxes.length === 2) combo2Count++;
+      else if (r.boxes.length === 3) combo3Count++;
+      else if (r.boxes.length === 4) combo4Count++;
+      else if (r.boxes.length >= 5) combo5Count++;
     });
 
     return {
@@ -680,6 +898,10 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
       comboFull,
       comboQtyMismatch,
       comboPartial,
+      combo2Count,
+      combo3Count,
+      combo4Count,
+      combo5Count,
       total: matchResults.length + combinationResults.length,
       full: singleFull + comboFull,
       qtyMismatch: singleQtyMismatch + comboQtyMismatch,
@@ -1131,7 +1353,7 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
                     }`}
                   >
                     <Boxes className="w-3.5 h-3.5" />
-                    <span>Csak Több Dobozos Kombinációk (X + Y) ({counts.comboTotal})</span>
+                    <span>Csak Több Dobozos Kombinációk (X + Y + ...) ({counts.comboTotal})</span>
                   </button>
                 </div>
 
@@ -1142,7 +1364,7 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
                     </span>
                   ) : counts.comboFull > 0 ? (
                     <span className="text-purple-700 font-bold">
-                      ★ Több dobozos kombinációval (X+Y) érhető el teljes fedés
+                      ★ Több dobozos kombinációval (X + Y + ...) érhető el teljes fedés
                     </span>
                   ) : null}
                 </div>
@@ -1415,8 +1637,8 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
                   </div>
                 )}
 
-                {/* 2. MÁSODIKKÉNT (UTÁNA): TÖBB MÉRŐDOBOZOS KOMBINÁCIÓK (X + Y + Z) */}
-                {viewModeFilter !== 'SINGLE' && filteredCombinations.length > 0 && (
+                {/* 2. MÁSODIKKÉNT (UTÁNA): TÖBB MÉRŐDOBOZOS KOMBINÁCIÓK (X + Y + Z + W + ...) */}
+                {viewModeFilter !== 'SINGLE' && combinationResults.length > 0 && (
                   <div className="space-y-4 pt-2">
                     <div className="flex items-center justify-between border-b-2 border-purple-300 pb-2.5">
                       <div className="flex items-center gap-2.5">
@@ -1427,20 +1649,118 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
                           <h3 className="text-base sm:text-lg font-black text-purple-950 flex items-center gap-2">
                             <span>Több Mérődobozos Kombinációk</span>
                             <span className="text-xs font-mono font-bold bg-purple-600 text-white px-2.5 py-0.5 rounded-full">
-                              X + Y (+ Z)
+                              2, 3, 4 vagy 5 doboz
                             </span>
                             <span className="text-xs bg-purple-100 text-purple-900 font-extrabold px-2 py-0.5 rounded-md">
                               {filteredCombinations.length} megoldás
                             </span>
                           </h3>
                           <p className="text-xs text-purple-800">
-                            Összetett konfigurációk, amelyek több mérődoboz együttes használatával fedik le a keresett konnektorokat
+                            Összetett konfigurációk, amelyek több mérődoboz (2, 3, 4 vagy 5 doboz) együttes használatával fedik le a keresett konnektorokat és darabszámokat
                           </p>
                         </div>
                       </div>
                     </div>
 
-                    <div className="space-y-5">
+                    {/* Dobozszám szerinti szűrő: Mind | 2 dobozos | 3 dobozos | 4 dobozos | 5 dobozos */}
+                    <div className="flex items-center gap-1.5 flex-wrap p-2.5 bg-purple-50/80 border border-purple-200 rounded-xl">
+                      <span className="text-xs font-black uppercase text-purple-950 mr-1 flex items-center gap-1">
+                        <Boxes className="w-3.5 h-3.5 text-purple-700" />
+                        <span>Dobozok száma:</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() => setComboSizeFilter('ALL')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          comboSizeFilter === 'ALL'
+                            ? 'bg-purple-900 text-white shadow-xs'
+                            : 'bg-white text-purple-900 hover:bg-purple-100 border border-purple-200'
+                        }`}
+                      >
+                        Összes ({counts.comboTotal})
+                      </button>
+
+                      {counts.combo2Count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setComboSizeFilter(2)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            comboSizeFilter === 2
+                              ? 'bg-purple-900 text-white shadow-xs'
+                              : 'bg-white text-purple-900 hover:bg-purple-100 border border-purple-200'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-purple-400" />
+                          <span>2 doboz (X + Y)</span>
+                          <span className="text-[11px] font-black opacity-80">({counts.combo2Count})</span>
+                        </button>
+                      )}
+
+                      {counts.combo3Count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setComboSizeFilter(3)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            comboSizeFilter === 3
+                              ? 'bg-purple-900 text-white shadow-xs'
+                              : 'bg-white text-purple-900 hover:bg-purple-100 border border-purple-200'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                          <span>3 doboz (X + Y + Z)</span>
+                          <span className="text-[11px] font-black opacity-80">({counts.combo3Count})</span>
+                        </button>
+                      )}
+
+                      {counts.combo4Count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setComboSizeFilter(4)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            comboSizeFilter === 4
+                              ? 'bg-purple-900 text-white shadow-xs'
+                              : 'bg-white text-purple-900 hover:bg-purple-100 border border-purple-200'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-pink-400" />
+                          <span>4 doboz (X + Y + Z + W)</span>
+                          <span className="text-[11px] font-black opacity-80">({counts.combo4Count})</span>
+                        </button>
+                      )}
+
+                      {counts.combo5Count > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setComboSizeFilter(5)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            comboSizeFilter === 5
+                              ? 'bg-purple-900 text-white shadow-xs'
+                              : 'bg-white text-purple-900 hover:bg-purple-100 border border-purple-200'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-amber-400" />
+                          <span>5 doboz</span>
+                          <span className="text-[11px] font-black opacity-80">({counts.combo5Count})</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {filteredCombinations.length === 0 ? (
+                      <div className="p-8 text-center bg-purple-50/50 rounded-xl border border-purple-200 text-stone-600 text-xs">
+                        Nincs a kiválasztott szűrőknek megfelelő {comboSizeFilter !== 'ALL' ? `${comboSizeFilter} dobozos ` : ''}kombináció.
+                        {comboSizeFilter !== 'ALL' && (
+                          <button
+                            type="button"
+                            onClick={() => setComboSizeFilter('ALL')}
+                            className="block mx-auto mt-2 text-purple-700 font-bold underline cursor-pointer"
+                          >
+                            Összes méret mutatása
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
                       {filteredCombinations.map((combo) => {
                         let badgeBg = '';
                         let badgeText = '';
@@ -1687,8 +2007,9 @@ export const MeterBoxFinderView: React.FC<MeterBoxFinderViewProps> = ({
                         );
                       })}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
               </div>
             )}
           </section>

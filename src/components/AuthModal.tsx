@@ -22,12 +22,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
   const [secondaryEmail, setSecondaryEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleDirectAdminLogin = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const customUid = 'usr_' + PRIMARY_ADMIN_EMAIL.replace(/[^a-zA-Z0-9]/g, '_');
+      const profile = await syncOrCreateUserProfile(
+        customUid,
+        PRIMARY_ADMIN_EMAIL,
+        'Kovács Roland (Adminisztrátor)'
+      );
+      saveCustomUserSession(profile);
+      onSuccess(profile);
+      onClose();
+    } catch (err: any) {
+      console.error('Direct admin login failed:', err);
+      setErrorMessage(err?.message || 'Nem sikerült a bejelentkezés.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setErrorMessage(null);
+    setUnauthorizedDomain(null);
     try {
       const cred = await loginWithGoogle();
       if (cred && cred.user) {
@@ -42,7 +65,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
       }
     } catch (err: any) {
       console.error('Google login failed:', err);
-      setErrorMessage(err?.message || 'Nem sikerült a Google bejelentkezés.');
+      const isDomainError =
+        err?.code === 'auth/unauthorized-domain' ||
+        (err?.message && err.message.includes('unauthorized-domain'));
+
+      if (isDomainError) {
+        const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+        setUnauthorizedDomain(currentHost);
+        setErrorMessage(
+          `A(z) "${currentHost}" webcím nincs engedélyezve a Firebase projektben.`
+        );
+      } else {
+        setErrorMessage(err?.message || 'Nem sikerült a Google bejelentkezés.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -136,17 +171,73 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
 
         {/* Modal Body */}
         <div className="p-6 space-y-4">
-          {errorMessage && (
+          {unauthorizedDomain ? (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-3 text-xs sm:text-sm text-amber-950 animate-fadeIn">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-extrabold text-amber-900">
+                    Firebase: Nem engedélyezett domain (auth/unauthorized-domain)
+                  </h4>
+                  <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                    A Firebase Auth Google belépéshez a jelenlegi webcím még nincs felvéve a Firebase projekt engedélyezett domainjei közé:
+                  </p>
+                  <code className="block my-2 p-2 bg-white rounded-lg border border-amber-300 font-mono text-xs font-bold text-stone-900 select-all">
+                    {unauthorizedDomain}
+                  </code>
+                </div>
+              </div>
+
+              <div className="p-3 bg-white/80 rounded-xl border border-amber-200 text-xs space-y-1.5">
+                <p className="font-bold text-stone-800">Hogyan engedélyezhető a Google fiókos belépéshez:</p>
+                <ol className="list-decimal list-inside space-y-1 text-stone-600 text-[11px] sm:text-xs">
+                  <li>
+                    Nyissa meg a Firebase Konzol beállításait:{' '}
+                    <a
+                      href="https://console.firebase.google.com/project/folkloric-origin-pxctm/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#1e6075] font-bold underline hover:text-[#3A5D6B]"
+                    >
+                      Firebase Auth Settings megnyitása ↗
+                    </a>
+                  </li>
+                  <li>
+                    Kattintson az <strong>Engedélyezett domainek (Authorized domains)</strong> fülre
+                  </li>
+                  <li>
+                    Kattintson a <strong>Domain hozzáadása</strong> gombra, és illessze be:{' '}
+                    <span className="font-mono font-bold text-amber-900">{unauthorizedDomain}</span>
+                  </li>
+                </ol>
+              </div>
+
+              <div className="pt-1">
+                <p className="text-xs text-stone-600 mb-2 font-medium">
+                  Azonnal használhatja a rendszert beállítás nélkül is az alábbi gombbal:
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDirectAdminLogin}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Azonnali belépés Adminisztrátorként ({PRIMARY_ADMIN_EMAIL})</span>
+                </button>
+              </div>
+            </div>
+          ) : errorMessage ? (
             <div className="p-3 bg-red-50 border border-red-300 text-red-900 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
               <span>{errorMessage}</span>
             </div>
-          )}
+          ) : null}
 
           {authMethod === 'google' ? (
             <div className="space-y-4 text-center py-2">
               <p className="text-sm text-gray-600">
-                Jelentkezzen be a meglévő Google fiókjával egyetlen kattintással.
+                Jelentkezzen be meglévő Google fiókjával vagy használja a közvetlen belépést:
               </p>
 
               <button
@@ -176,12 +267,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                 <span>{isLoading ? 'Bejelentkezés folyamatban...' : 'Belépés Google fiókkal'}</span>
               </button>
 
+              {/* Direct Admin Login Quick Action */}
+              <div className="pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={handleDirectAdminLogin}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-[#3A5D6B] text-slate-800 hover:text-white font-extrabold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer border border-slate-300"
+                >
+                  <ShieldCheck className="w-4 h-4 text-[#79B6B8]" />
+                  <span>Közvetlen belépés: {PRIMARY_ADMIN_EMAIL} (Admin)</span>
+                </button>
+              </div>
+
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-left">
                 <span className="text-xs text-gray-500 block font-semibold mb-0.5">
                   Tipp a rendszergazdának:
                 </span>
                 <p className="text-xs text-gray-700">
-                  A <strong>{PRIMARY_ADMIN_EMAIL}</strong> Google fiókkal belépve automatikusan <strong>Adminisztrátor</strong> jogosultságot kap.
+                  A <strong>{PRIMARY_ADMIN_EMAIL}</strong> fiókkal belépve automatikusan teljes <strong>Adminisztrátor</strong> jogosultságot kap.
                 </p>
               </div>
             </div>
